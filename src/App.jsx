@@ -1,11 +1,14 @@
-// App.jsx
-import React, { useEffect, useState } from "react";
+// src/App.jsx
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 
 function App() {
   // Auth / session
   const [session, setSession] = useState(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+
+  // Page (clients vs dashboard)
+  const [page, setPage] = useState("clients"); // clients | dashboard
 
   // Flow de reset de mot de passe (via lien Supabase)
   const [isResetFlow, setIsResetFlow] = useState(false);
@@ -27,15 +30,25 @@ function App() {
   // Commentaires / relances
   const [commentsByClient, setCommentsByClient] = useState({});
   const [commentInputs, setCommentInputs] = useState({}); // clientId -> texte saisi
+  const [nextDueInputs, setNextDueInputs] = useState({}); // clientId -> YYYY-MM-DD (choisi au moment de la relance)
 
   // Filtres
   const [currentTab, setCurrentTab] = useState("vendeur"); // vendeur | acquereur | apresvente | tous
   const [statusFilter, setStatusFilter] = useState("arelancer"); // arelancer | encours | tous | clos
   const [commercialFilter, setCommercialFilter] = useState("Tous");
 
-  // Admin
+  // UI
+  const [viewMode, setViewMode] = useState("detail"); // detail | compact
+  const [expandedClientId, setExpandedClientId] = useState(null); // un seul client déplié à la fois
+
+  // ✅ Rôles
+  const [userRole, setUserRole] = useState("user"); // user | manager | admin
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isManager, setIsManager] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+
+  // ✅ Manager scope (si role=manager)
+  const [managedUserIds, setManagedUserIds] = useState([]);
 
   // Auth form
   const [authEmail, setAuthEmail] = useState("");
@@ -49,6 +62,7 @@ function App() {
   const [editingClientId, setEditingClientId] = useState(null); // null = création
   const [newClient, setNewClient] = useState({
     category: "seller",
+    seller_kind: "Vendeur", // ✅ nouveau
     first_name: "",
     last_name: "",
     email: "",
@@ -59,6 +73,7 @@ function App() {
     property_address: "",
     project_horizon: "Court terme",
     consultant_feeling: "",
+    sale_reason: "",
     contact_origin: "",
     project_type: "",
     area: "",
@@ -76,9 +91,53 @@ function App() {
   const [closureClient, setClosureClient] = useState(null);
   const [closureReason, setClosureReason] = useState("projet_abandonne");
 
+  // ✅ Paramètres admin : users + délais
+  const [adminMsg, setAdminMsg] = useState("");
+  const [adminBusy, setAdminBusy] = useState(false);
+  const [reassignFrom, setReassignFrom] = useState("");
+  const [reassignTo, setReassignTo] = useState("");
+
+  // Délais (localStorage + optionnel Supabase app_settings)
+  const DEFAULT_RELANCE_CONFIG = {
+    seller: { initial_days: 15, default_next_days: 14 },
+    buyer: { initial_days: 15, default_next_days: 14 },
+    after: { initial_days: 15, default_next_days: 14 },
+  };
+  const [relanceConfig, setRelanceConfig] = useState(DEFAULT_RELANCE_CONFIG);
+
   useEffect(() => {
     document.title = "Keepintouch";
   }, []);
+
+  // ---------- UTIL BASE ----------
+
+  const formatDate = (value) => {
+    if (!value) return "";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("fr-FR");
+  };
+
+  const humanCategory = (cat) => {
+    if (cat === "seller") return "Vendeur / Bailleur & Estimation";
+    if (cat === "buyer") return "Acquéreur";
+    if (cat === "after") return "Après-vente";
+    return "Client";
+  };
+
+  const pluralize = (n, singular, plural) => (n > 1 ? plural : singular);
+
+  const addDays = (baseDate, days) => {
+    const d = baseDate ? new Date(baseDate) : new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const getRelanceCfgForCategory = (category) => {
+    const cat = category === "buyer" ? "buyer" : category === "after" ? "after" : "seller";
+    return relanceConfig?.[cat] || DEFAULT_RELANCE_CONFIG[cat];
+  };
 
   // ---------- SESSION ----------
 
@@ -121,41 +180,141 @@ function App() {
     }
   }, []);
 
+  // ---------- RELANCE CONFIG LOAD/SAVE ----------
+
+  const loadRelanceConfig = async () => {
+    // 1) localStorage
+    try {
+      const raw = localStorage.getItem("kit_relance_config_v1");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          setRelanceConfig((prev) => ({ ...prev, ...parsed }));
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // 2) supabase app_settings (optionnel)
+    try {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("key, value")
+        .eq("key", "relance_config")
+        .maybeSingle();
+
+      if (!error && data?.value) {
+        setRelanceConfig((prev) => ({ ...prev, ...data.value }));
+        try {
+          localStorage.setItem("kit_relance_config_v1", JSON.stringify({ ...DEFAULT_RELANCE_CONFIG, ...data.value }));
+        } catch (e) {
+          // ignore
+        }
+      }
+    } catch (e) {
+      // table absente ou RLS -> on reste en local
+    }
+  };
+
+  const persistRelanceConfig = async (nextCfg) => {
+    setRelanceConfig(nextCfg);
+    try {
+      localStorage.setItem("kit_relance_config_v1", JSON.stringify(nextCfg));
+    } catch (e) {
+      // ignore
+    }
+
+    // tentative d’upsert dans app_settings (si existe)
+    try {
+      await supabase
+        .from("app_settings")
+        .upsert({ key: "relance_config", value: nextCfg }, { onConflict: "key" });
+    } catch (e) {
+      // ignore
+    }
+  };
+
   // ---------- PROFILS / COMMERCIAUX ----------
 
-  useEffect(() => {
-    const loadProfiles = async () => {
-      if (!session?.user) return;
+  const fetchProfiles = async (sess) => {
+    if (!sess?.user) return;
 
-      try {
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("id, email")
-          .order("email", { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, email, role, team_id, is_active")
+        .order("email", { ascending: true });
 
-        if (error) throw error;
+      if (error) throw error;
 
-        setProfiles(data || []);
+      setProfiles(data || []);
 
-        const map = {};
-        (data || []).forEach((p) => {
-          map[p.id] = { email: p.email };
-        });
-        setProfilesMap(map);
-        setCommercials(data || []);
+      const map = {};
+      (data || []).forEach((p) => {
+        map[p.id] = { email: p.email, is_active: p.is_active, role: p.role };
+      });
+      setProfilesMap(map);
 
-        setIsAdmin(session.user.email === "benjamin@18avenue.fr");
-      } catch (err) {
-        console.error("Erreur loadProfiles", err);
-        setLastError(err.message || "Erreur chargement profils");
+      // commerciaux = profils (tu avais ça)
+      setCommercials(data || []);
+
+      const myProfile = (data || []).find((p) => p.id === sess.user.id);
+      const role = myProfile?.role || "user";
+      setUserRole(role);
+      setIsAdmin(role === "admin");
+      setIsManager(role === "manager");
+
+      // ✅ si user désactivé : on bloque l’usage
+      if (myProfile && myProfile.is_active === false) {
+        setLastError("Ton compte est désactivé. Contacte un administrateur.");
+        // tentative logout propre
+        try {
+          await supabase.auth.signOut();
+        } catch (e) {}
+        setSession(null);
       }
-    };
+    } catch (err) {
+      console.error("Erreur loadProfiles", err);
+      setLastError(err.message || "Erreur chargement profils");
+    }
+  };
 
-    loadProfiles();
+  useEffect(() => {
+    if (!session?.user) return;
+    fetchProfiles(session);
+    loadRelanceConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
-  const getCommercialEmail = (owner_id) =>
-    profilesMap[owner_id]?.email || "";
+  // ✅ Charger la liste des users managés si manager
+  useEffect(() => {
+    const loadManaged = async () => {
+      if (!session?.user) return;
+
+      if (userRole !== "manager") {
+        setManagedUserIds([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("manager_assignments")
+        .select("user_id")
+        .eq("manager_id", session.user.id);
+
+      if (error) {
+        console.warn("Erreur load manager_assignments:", error.message);
+        setManagedUserIds([]);
+        return;
+      }
+
+      setManagedUserIds((data || []).map((x) => x.user_id));
+    };
+
+    loadManaged();
+  }, [session, userRole]);
+
+  const getCommercialEmail = (owner_id) => profilesMap[owner_id]?.email || "";
 
   // ---------- CLIENTS & COMMENTAIRES ----------
 
@@ -210,6 +369,7 @@ function App() {
     fetchClientsFromDb().then(() => {
       fetchCommentsFromDb();
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   // ---------- FILTRES ----------
@@ -236,26 +396,41 @@ function App() {
       const d = new Date(client.next_followup_at);
       if (!Number.isNaN(d.getTime())) return d;
     }
-    if (client.estimation_date) {
+
+    // ✅ délais paramétrables (fallback)
+    const cfg = getRelanceCfgForCategory(client.category);
+
+    if (client.estimation_date && client.category === "seller") {
       const d = new Date(client.estimation_date);
       if (!Number.isNaN(d.getTime())) {
-        d.setDate(d.getDate() + 15);
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + (Number(cfg.initial_days) || 15));
         return d;
       }
     }
-    if (client.acquisition_date) {
+    if (client.acquisition_date && client.category === "buyer") {
       const d = new Date(client.acquisition_date);
       if (!Number.isNaN(d.getTime())) {
-        d.setDate(d.getDate() + 15);
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + (Number(cfg.initial_days) || 15));
         return d;
       }
     }
+    if (client.created_at && client.category === "after") {
+      const d = new Date(client.created_at);
+      if (!Number.isNaN(d.getTime())) {
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + (Number(cfg.initial_days) || 15));
+        return d;
+      }
+    }
+
     return null;
   };
 
   const getFollowupInfo = (client) => {
     const next = getNextDueDate(client);
-    if (!next) return { label: "", delayLabel: "", diffDays: null };
+    if (!next) return { label: "", delayLabel: "", diffDays: null, nextDate: null };
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -275,6 +450,7 @@ function App() {
       label: `Prochaine relance : ${formatDate(next)}`,
       delayLabel,
       diffDays,
+      nextDate: next,
     };
   };
 
@@ -307,11 +483,9 @@ function App() {
       // rien
     }
 
-    // Filtre commercial seulement pour l’admin
-    if (isAdmin && commercialFilter !== "Tous") {
-      list = list.filter(
-        (c) => getCommercialEmail(c.owner_id) === commercialFilter
-      );
+    // Filtre commercial pour admin OU manager
+    if ((isAdmin || isManager) && commercialFilter !== "Tous") {
+      list = list.filter((c) => getCommercialEmail(c.owner_id) === commercialFilter);
     }
 
     list.sort((a, b) => {
@@ -332,7 +506,9 @@ function App() {
 
   useEffect(() => {
     applyFilters();
-  }, [clientsRaw, currentTab, statusFilter, commercialFilter, profilesMap, isAdmin]);
+    setExpandedClientId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientsRaw, currentTab, statusFilter, commercialFilter, profilesMap, isAdmin, isManager, relanceConfig]);
 
   // ---------- AJOUT / EDIT CLIENT ----------
 
@@ -345,6 +521,7 @@ function App() {
           : currentTab === "apresvente"
           ? "after"
           : "seller",
+      seller_kind: "Vendeur",
       first_name: "",
       last_name: "",
       email: "",
@@ -355,6 +532,7 @@ function App() {
       property_address: "",
       project_horizon: "Court terme",
       consultant_feeling: "",
+      sale_reason: "",
       contact_origin: "",
       project_type: "",
       area: "",
@@ -374,6 +552,7 @@ function App() {
     setEditingClientId(client.id);
     setNewClient({
       category: client.category || "seller",
+      seller_kind: client.seller_kind || "Vendeur",
       first_name: client.first_name || "",
       last_name: client.last_name || "",
       email: client.email || "",
@@ -384,6 +563,7 @@ function App() {
       property_address: client.property_address || "",
       project_horizon: client.project_horizon || "Court terme",
       consultant_feeling: client.consultant_feeling || "",
+      sale_reason: client.sale_reason || "",
       contact_origin: client.contact_origin || "",
       project_type: client.project_type || "",
       area: client.area || "",
@@ -407,21 +587,22 @@ function App() {
   };
 
   const computeInitialNextDue = (cl) => {
+    const cfg = getRelanceCfgForCategory(cl.category);
+    const initialDays = Number(cfg.initial_days) || 15;
+
     let base = null;
-    if (cl.category === "seller" && cl.estimation_date) {
-      base = new Date(cl.estimation_date);
-    } else if (cl.category === "buyer" && cl.acquisition_date) {
-      base = new Date(cl.acquisition_date);
-    } else if (cl.category === "after" && cl.created_at) {
-      base = new Date(cl.created_at);
-    }
-    if (!base) {
-      base = new Date();
-    }
+    if (cl.category === "seller" && cl.estimation_date) base = new Date(cl.estimation_date);
+    else if (cl.category === "buyer" &&	query_date(cl.acquisition_date)) base = new Date(cl.acquisition_date);
+    else if (cl.category === "after" &&	cl.created_at) base = new Date(cl.created_at);
+
+    if (!base) base = new Date();
     base.setHours(0, 0, 0, 0);
-    base.setDate(base.getDate() + 15);
+    base.setDate(base.getDate() + initialDays);
     return base.toISOString().slice(0, 10);
   };
+
+  // petite protection (certaines dates arrivent vides)
+  const query_date = (v) => !!v && /^\d{4}-\d{2}-\d{2}/.test(String(v));
 
   const handleSaveClient = async (e) => {
     e.preventDefault();
@@ -438,10 +619,7 @@ function App() {
       alert("Le téléphone est obligatoire.");
       return;
     }
-    if (
-      newClient.category === "seller" &&
-      !newClient.property_address.trim()
-    ) {
+    if (newClient.category === "seller" && !newClient.property_address.trim()) {
       alert("L’adresse du bien est obligatoire pour un vendeur / bailleur.");
       return;
     }
@@ -488,9 +666,7 @@ function App() {
         bedrooms:
           newClient.category === "buyer" ? newClient.bedrooms || null : null,
         min_surface:
-          newClient.category === "buyer"
-            ? newClient.min_surface || null
-            : null,
+          newClient.category === "buyer" ? newClient.min_surface || null : null,
         also_owner:
           newClient.category === "buyer" ? !!newClient.also_owner : false,
         after_address:
@@ -499,16 +675,24 @@ function App() {
           newClient.category === "after"
             ? newClient.client_birthday || null
             : null,
-        context:
-          newClient.category === "after" ? newClient.context || null : null,
+        context: newClient.category === "after" ? newClient.context || null : null,
       };
+
+      // ✅ seller_kind (vendeur/bailleur) — envoyé seulement si rempli
+      if (newClient.category === "seller" && (newClient.seller_kind || "").trim()) {
+        payload.seller_kind = newClient.seller_kind.trim();
+      }
+
+      // ✅ raison vente — envoyé seulement si rempli
+      if (newClient.category === "seller" && (newClient.sale_reason || "").trim()) {
+        payload.sale_reason = newClient.sale_reason.trim();
+      }
 
       if (editingClientId) {
         const { error } = await supabase
           .from("clients")
           .update(payload)
           .eq("id", editingClientId);
-
         if (error) throw error;
       } else {
         const insertPayload = {
@@ -544,6 +728,10 @@ function App() {
     setCommentInputs((prev) => ({ ...prev, [clientId]: text }));
   };
 
+  const setNextDueForClient = (clientId, yyyymmdd) => {
+    setNextDueInputs((prev) => ({ ...prev, [clientId]: yyyymmdd }));
+  };
+
   const handleValidateRelance = async (client) => {
     const text = (commentInputs[client.id] || "").trim();
     if (!text) {
@@ -554,13 +742,11 @@ function App() {
     try {
       setIsLoading(true);
 
-      const { error: insertErr } = await supabase
-        .from("client_comments")
-        .insert({
-          client_id: client.id,
-          body: text,
-          author_id: session.user.id,
-        });
+      const { error: insertErr } = await supabase.from("client_comments").insert({
+        client_id: client.id,
+        body: text,
+        author_id: session.user.id,
+      });
 
       if (insertErr) {
         throw new Error(
@@ -570,10 +756,14 @@ function App() {
 
       await fetchCommentsFromDb();
 
-      const next = new Date();
-      next.setHours(0, 0, 0, 0);
-      next.setDate(next.getDate() + 14);
-      const nextStr = next.toISOString().slice(0, 10);
+      const chosen = nextDueInputs[client.id];
+      const cfg = getRelanceCfgForCategory(client.category);
+      const defaultNext = Number(cfg.default_next_days) || 14;
+
+      const nextStr =
+        chosen && /^\d{4}-\d{2}-\d{2}$/.test(chosen)
+          ? chosen
+          : addDays(new Date(), defaultNext);
 
       const { error: updErr } = await supabase
         .from("clients")
@@ -592,6 +782,8 @@ function App() {
       }
 
       setCommentInputs((prev) => ({ ...prev, [client.id]: "" }));
+      setNextDueInputs((prev) => ({ ...prev, [client.id]: "" }));
+
       await fetchClientsFromDb();
     } catch (err) {
       console.error("Erreur validate relance", err);
@@ -600,6 +792,8 @@ function App() {
       setIsLoading(false);
     }
   };
+
+  // ---------- CLOTURE ----------
 
   const openClosureModal = (client) => {
     setClosureClient(client);
@@ -611,10 +805,7 @@ function App() {
     if (cat === "buyer") {
       return [
         { value: "achete_avec_nous", label: "A acheté avec nous" },
-        {
-          value: "achete_autre_agence",
-          label: "A acheté avec une autre agence",
-        },
+        { value: "achete_autre_agence", label: "A acheté avec une autre agence" },
         { value: "achete_seul", label: "A trouvé seul" },
         { value: "n_achete_plus", label: "N’achète plus" },
         { value: "ne_repond_plus", label: "Ne répond plus" },
@@ -628,16 +819,10 @@ function App() {
     }
     return [
       { value: "vendu_avec_nous", label: "A vendu avec nous" },
-      {
-        value: "vendu_autre_agence",
-        label: "A vendu avec une autre agence",
-      },
+      { value: "vendu_autre_agence", label: "A vendu avec une autre agence" },
       { value: "vendu_seul", label: "A vendu seul" },
       { value: "projet_abandonne", label: "Projet abandonné" },
-      {
-        value: "ne_souhaite_plus_vendre",
-        label: "Ne souhaite plus vendre / louer",
-      },
+      { value: "ne_souhaite_plus_vendre", label: "Ne souhaite plus vendre / louer" },
     ];
   };
 
@@ -696,6 +881,11 @@ function App() {
       setClientsRaw([]);
       setClients([]);
       setIsResetFlow(false);
+      setUserRole("user");
+      setIsAdmin(false);
+      setIsManager(false);
+      setManagedUserIds([]);
+      setPage("clients");
     } catch (err) {
       console.error("Erreur signOut", err);
     }
@@ -771,17 +961,13 @@ function App() {
     }
 
     try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
 
       setResetDone(true);
       setNewPassword("");
       setIsResetFlow(false);
-      if (typeof window !== "undefined") {
-        window.location.hash = "";
-      }
+      if (typeof window !== "undefined") window.location.hash = "";
       alert("Mot de passe mis à jour. Tu peux te reconnecter.");
     } catch (err) {
       console.error("Erreur update password", err);
@@ -791,28 +977,757 @@ function App() {
     }
   };
 
-  // ---------- UTIL ----------
+  // ---------- TITRES / SECTIONS ----------
 
-  const formatDate = (value) => {
-    if (!value) return "";
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleDateString("fr-FR");
+  const statusSuffix = useMemo(() => {
+    if (statusFilter === "arelancer") return "à relancer";
+    if (statusFilter === "encours") return "en cours";
+    if (statusFilter === "clos") return "clos";
+    return "";
+  }, [statusFilter]);
+
+  const sellerTitle = "Vendeur / Bailleur & Estimation";
+  const buyerTitle = "Acquéreur";
+  const afterTitle = "Après-vente";
+
+  const sellers = useMemo(
+    () => clients.filter((c) => c.category === "seller"),
+    [clients]
+  );
+  const buyers = useMemo(
+    () => clients.filter((c) => c.category === "buyer"),
+    [clients]
+  );
+  const afters = useMemo(
+    () => clients.filter((c) => c.category === "after"),
+    [clients]
+  );
+
+  const makeSectionTitle = (base, count) => {
+    const sfx = statusSuffix ? ` ${statusSuffix}` : "";
+    return `${base} : ${count} ${pluralize(count, "client", "clients")}${sfx}`;
   };
 
-  const humanCategory = (cat) => {
-    if (cat === "seller") return "Vendeur / Bailleur & Estimation";
-    if (cat === "buyer") return "Acquéreur";
-    if (cat === "after") return "Après-vente";
-    return "Client";
+  const emptyTextForCategory = (catKey) => {
+    const base =
+      catKey === "seller"
+        ? "Aucun client vendeur/bailleur"
+        : catKey === "buyer"
+        ? "Aucun client acquéreur"
+        : "Aucun client après-vente";
+
+    if (statusFilter === "tous") return `${base}.`;
+    if (statusFilter === "arelancer") return `${base} à relancer.`;
+    if (statusFilter === "encours") return `${base} en cours.`;
+    if (statusFilter === "clos") return `${base} clos.`;
+    return `${base}.`;
   };
 
-  const humanStatus = (s) => {
-    if (!s) return "";
-    if (s === "active") return "Actif";
-    if (s === "closed") return "Clos";
-    return s;
+  // ---------- COMPACT / DETAIL ----------
+
+  const getLastRelanceDate = (clientId) => {
+    const comments = commentsByClient[clientId] || [];
+    if (!comments.length) return null;
+    const sorted = [...comments].sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    );
+    return sorted[0]?.created_at || null;
   };
+
+  const DelayPill = ({ diffDays, delayLabel }) => {
+    if (diffDays == null || !delayLabel) return null;
+    const style =
+      diffDays < 0
+        ? {
+            padding: "2px 8px",
+            borderRadius: 999,
+            background: "#fef2f2",
+            color: "#b91c1c",
+            fontSize: "0.75rem",
+            whiteSpace: "nowrap",
+          }
+        : {
+            padding: "2px 8px",
+            borderRadius: 999,
+            background: "#eff6ff",
+            color: "#1d4ed8",
+            fontSize: "0.75rem",
+            whiteSpace: "nowrap",
+          };
+    return <span style={style}>{delayLabel}</span>;
+  };
+
+  const renderCompactRow = (client) => {
+  const name =
+    (client.first_name || "") +
+      (client.first_name && client.last_name ? " " : "") +
+      (client.last_name || "") || "(Sans nom)";
+
+  const commercialEmail = getCommercialEmail(client.owner_id);
+  const { delayLabel, diffDays } = getFollowupInfo(client);
+
+  const lastRel = getLastRelanceDate(client.id);
+  const lastRelLabel = lastRel ? formatDate(lastRel) : "—";
+
+  const next = getNextDueDate(client);
+  const nextLabel = next ? formatDate(next) : "—";
+
+  const isExpanded = expandedClientId === client.id;
+
+  const leftLine2 = (() => {
+    if (client.category === "seller") {
+      const addr = client.property_address ? client.property_address : "—";
+      const est = client.estimation_date ? formatDate(client.estimation_date) : "—";
+      return `Adresse : ${addr}  •  Estimation : ${est}  •  Dernière relance : ${lastRelLabel}  •  Prochaine : ${nextLabel}`;
+    }
+    if (client.category === "buyer") {
+      const sector = client.area ? client.area : "—";
+      const budget = client.budget_max ? `Budget : ${client.budget_max}` : null;
+      const surf = client.min_surface ? `Surf min : ${client.min_surface} m²` : null;
+      const beds = client.bedrooms ? `Chambres : ${client.bedrooms}` : null;
+      const parts = [
+        `Secteur : ${sector}`,
+        budget,
+        surf,
+        beds,
+        client.acquisition_date ? `Enregistrement : ${formatDate(client.acquisition_date)}` : null,
+        `Dernière relance : ${lastRelLabel}`,
+        `Prochaine : ${nextLabel}`,
+      ].filter(Boolean);
+      return parts.join("  •  ");
+    }
+    const addr = client.after_address ? client.after_address : "—";
+    const sale = client.created_at ? formatDate(client.created_at) : "—";
+    return `Adresse : ${addr}  •  Vente : ${sale}  •  Dernière relance : ${lastRelLabel}  •  Prochaine : ${nextLabel}`;
+  })();
+
+  return (
+    <div className={"compact-row" + (isExpanded ? " compact-row-expanded" : "")}>
+      <button
+        className="compact-row-click"
+        onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
+        type="button"
+        title={isExpanded ? "Replier" : "Déplier"}
+      >
+        <div className="compact-row-main">
+          <div className="compact-row-line1">
+            <span className="compact-name">{name}</span>
+            {(isAdmin || isManager) && (
+              <span className="compact-owner">— {commercialEmail || "—"}</span>
+            )}
+            {!isAdmin && !isManager && client.email && (
+              <span className="compact-owner">— {client.email}</span>
+            )}
+          </div>
+
+          <div className="compact-row-line2" title={leftLine2}>
+            {leftLine2}
+          </div>
+        </div>
+
+        <div className="compact-row-right">
+          <DelayPill diffDays={diffDays} delayLabel={delayLabel} />
+          <span className="chev">{isExpanded ? "▲" : "▼"}</span>
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="compact-expanded">{renderClientDetailCard(client)}</div>
+      )}
+    </div>
+  );
+};
+
+
+  const renderClientDetailCard = (c) => {
+    const name =
+      (c.first_name || "") +
+        (c.first_name && c.last_name ? " " : "") +
+        (c.last_name || "") || "(Sans nom)";
+    const commercialEmail = getCommercialEmail(c.owner_id);
+    const catLabel = humanCategory(c.category);
+    const { label: nextLabel, delayLabel, diffDays } = getFollowupInfo(c);
+    const comments = commentsByClient[c.id] || [];
+
+    const isBuyer = c.category === "buyer";
+    const isAfter = c.category === "after";
+
+    const delayStyle =
+      diffDays == null
+        ? {}
+        : diffDays < 0
+        ? {
+            marginLeft: 6,
+            padding: "2px 8px",
+            borderRadius: 999,
+            background: "#fef2f2",
+            color: "#b91c1c",
+            fontSize: "0.75rem",
+          }
+        : {
+            marginLeft: 6,
+            padding: "2px 8px",
+            borderRadius: 999,
+            background: "#eff6ff",
+            color: "#1d4ed8",
+            fontSize: "0.75rem",
+          };
+
+    return (
+      <div className="client-card detail-card-inside">
+        <div className="client-header">
+          <div>
+            {(isAdmin || isManager) && (
+              <div className="client-commercial">
+                Commercial : {commercialEmail || "—"}
+              </div>
+            )}
+            <div className="client-name">{name}</div>
+            {c.email && <div className="client-line">{c.email}</div>}
+            {c.phone && <div className="client-line">{c.phone}</div>}
+          </div>
+
+          <div style={{ textAlign: "right" }}>
+            {nextLabel && (
+              <div style={{ marginTop: 6, fontSize: "0.8rem", color: "#4b5563" }}>
+                {nextLabel}
+                {delayLabel && <span style={delayStyle}>{delayLabel}</span>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="client-body">
+          <div className="field-row">
+            <span className="field-key">Catégorie</span>
+            <span className="field-value">{catLabel}</span>
+          </div>
+
+          {!isBuyer && !isAfter && c.seller_kind && (
+            <div className="field-row">
+              <span className="field-key">Type</span>
+              <span className="field-value">{c.seller_kind}</span>
+            </div>
+          )}
+
+          {c.contact_origin && (
+            <div className="field-row">
+              <span className="field-key">Origine</span>
+              <span className="field-value">{c.contact_origin}</span>
+            </div>
+          )}
+
+          {!isBuyer && !isAfter && c.estimation_date && (
+            <div className="field-row">
+              <span className="field-key">Estimation</span>
+              <span className="field-value">{formatDate(c.estimation_date)}</span>
+            </div>
+          )}
+
+          {isBuyer && c.acquisition_date && (
+            <div className="field-row">
+              <span className="field-key">Date enregistrement</span>
+              <span className="field-value">{formatDate(c.acquisition_date)}</span>
+            </div>
+          )}
+
+          {isAfter && c.created_at && (
+            <div className="field-row">
+              <span className="field-key">Date de vente</span>
+              <span className="field-value">{formatDate(c.created_at)}</span>
+            </div>
+          )}
+
+          {!isBuyer && !isAfter && c.property_address && (
+            <div className="field-row">
+              <span className="field-key">Adresse bien</span>
+              <span className="field-value">{c.property_address}</span>
+            </div>
+          )}
+
+          {isAfter && c.after_address && (
+            <div className="field-row">
+              <span className="field-key">Adresse</span>
+              <span className="field-value">{c.after_address}</span>
+            </div>
+          )}
+
+          {isBuyer && c.area && (
+            <div className="field-row">
+              <span className="field-key">Secteur</span>
+              <span className="field-value">{c.area}</span>
+            </div>
+          )}
+
+          {isBuyer && (c.budget_max || c.min_surface) && (
+            <div className="field-row">
+              <span className="field-key">Projet</span>
+              <span className="field-value">
+                {c.budget_max && `Budget max : ${c.budget_max} `}
+                {c.min_surface && `— Surface min : ${c.min_surface} m²`}
+                {c.bedrooms && ` — Chambres : ${c.bedrooms}`}
+                {c.also_owner && " — Aussi propriétaire"}
+              </span>
+            </div>
+          )}
+
+          {c.consultant_feeling && (
+            <div className="field-row">
+              <span className="field-key">Ressenti</span>
+              <span className="field-value">{c.consultant_feeling}</span>
+            </div>
+          )}
+
+          {!isBuyer && !isAfter && c.sale_reason && (
+            <div className="field-row">
+              <span className="field-key">Raison vente / mise en location</span>
+              <span className="field-value">{c.sale_reason}</span>
+            </div>
+          )}
+
+          {!isBuyer && !isAfter && c.project_horizon && (
+            <div className="field-row">
+              <span className="field-key">Horizon projet</span>
+              <span className="field-value">{c.project_horizon}</span>
+            </div>
+          )}
+
+          {isAfter && c.client_birthday && (
+            <div className="field-row">
+              <span className="field-key">Anniversaire client</span>
+              <span className="field-value">{formatDate(c.client_birthday)}</span>
+            </div>
+          )}
+
+          {isAfter && c.context && (
+            <div className="field-row">
+              <span className="field-key">Contexte</span>
+              <span className="field-value">{c.context}</span>
+            </div>
+          )}
+
+          <div style={{ marginTop: 10 }}>
+            <div
+              style={{
+                fontSize: "0.8rem",
+                marginBottom: comments.length ? 4 : 8,
+                color: "#111827",
+                fontWeight: 600,
+              }}
+            >
+              Historique des relances
+            </div>
+
+            {comments.length > 0 && (
+              <ul
+                style={{
+                  listStyle: "none",
+                  paddingLeft: 0,
+                  marginTop: 0,
+                  marginBottom: 6,
+                  fontSize: "0.8rem",
+                  color: "#4b5563",
+                }}
+              >
+                {comments
+                  .slice()
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .map((n) => (
+                    <li key={n.id}>
+                      <strong>{formatDate(n.created_at)} :</strong> {n.body}
+                    </li>
+                  ))}
+              </ul>
+            )}
+
+            <textarea
+              rows={2}
+              placeholder="Ajouter un commentaire (ex : relancé, client en réflexion…)"
+              value={commentInputs[c.id] || ""}
+              onChange={(e) => handleCommentInputChange(c.id, e.target.value)}
+              style={{
+                width: "100%",
+                borderRadius: 10,
+                border: "1px solid #d1d5db",
+                padding: "6px 8px",
+                fontSize: "0.85rem",
+                resize: "vertical",
+              }}
+            />
+
+            <div className="nextdue-row">
+              <div className="nextdue-label">Prochaine relance</div>
+              <input
+                type="date"
+                value={nextDueInputs[c.id] || ""}
+                onChange={(e) => setNextDueForClient(c.id, e.target.value)}
+                className="nextdue-input"
+              />
+              <button
+                type="button"
+                className="btn-outline-small"
+                onClick={() => setNextDueForClient(c.id, addDays(new Date(), 7))}
+                title="Mettre +7 jours"
+              >
+                +7 j
+              </button>
+              <button
+                type="button"
+                className="btn-outline-small"
+                onClick={() => setNextDueForClient(c.id, addDays(new Date(), 14))}
+                title="Mettre +14 jours"
+              >
+                +14 j
+              </button>
+              <button
+                type="button"
+                className="btn-outline-small"
+                onClick={() => setNextDueForClient(c.id, addDays(new Date(), 21))}
+                title="Mettre +21 jours"
+              >
+                +21 j
+              </button>
+              <button
+                type="button"
+                className="btn-outline-small"
+                onClick={() => setNextDueForClient(c.id, addDays(new Date(), 30))}
+                title="Mettre +30 jours"
+              >
+                +30 j
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="client-footer">
+          {c.status === "active" && (
+            <>
+              <button
+                className="btn-outline-small"
+                onClick={() => handleValidateRelance(c)}
+              >
+                Valider relance
+              </button>
+              <button
+                className="btn-outline-small"
+                onClick={() => openEditModal(c)}
+              >
+                Modifier
+              </button>
+            </>
+          )}
+          <button
+            className="btn-outline-small"
+            onClick={() => openClosureModal(c)}
+          >
+            Clôturer…
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderClientsBlock = (list, sectionTitle, catKey) => {
+    if (isLoading) return <p>Chargement…</p>;
+    if (list.length === 0) return <p>{emptyTextForCategory(catKey)}</p>;
+
+    return (
+      <>
+        <h2 className="section-title">{sectionTitle}</h2>
+
+        {viewMode === "detail" ? (
+          <div className="clients-list">
+            {list.map((c) => (
+              <div key={c.id}>{renderClientDetailCard(c)}</div>
+            ))}
+          </div>
+        ) : (
+          <div className="compact-list">
+  {list.map((c) => (
+    <div key={c.id}>{renderCompactRow(c)}</div>
+  ))}
+</div>
+
+        )}
+      </>
+    );
+  };
+
+  // ---------- ADMIN: actions users ----------
+
+  const toggleUserActive = async (userId, nextIsActive) => {
+    setAdminMsg("");
+    if (!userId) return;
+    if (userId === session?.user?.id) {
+      setAdminMsg("Impossible de désactiver ton propre compte.");
+      return;
+    }
+    setAdminBusy(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ is_active: nextIsActive })
+        .eq("id", userId);
+
+      if (error) throw error;
+
+      setAdminMsg(nextIsActive ? "Utilisateur réactivé." : "Utilisateur désactivé.");
+      await fetchProfiles(session);
+    } catch (err) {
+      console.error("toggleUserActive", err);
+      setAdminMsg("Erreur : " + (err.message || "update profiles"));
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const reassignClientsToUser = async () => {
+    setAdminMsg("");
+    if (!reassignFrom || !reassignTo) {
+      setAdminMsg("Choisis un utilisateur source et une cible.");
+      return;
+    }
+    if (reassignFrom === reassignTo) {
+      setAdminMsg("Source et cible identiques.");
+      return;
+    }
+    setAdminBusy(true);
+    try {
+      const { error } = await supabase
+        .from("clients")
+        .update({ owner_id: reassignTo })
+        .eq("owner_id", reassignFrom);
+
+      if (error) throw error;
+
+      setAdminMsg("Clients réaffectés.");
+      await fetchClientsFromDb();
+    } catch (err) {
+      console.error("reassignClientsToUser", err);
+      setAdminMsg("Erreur : " + (err.message || "update clients.owner_id"));
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const updateRelanceCfgField = (cat, field, value) => {
+    const v = Math.max(0, Number(value || 0));
+    const next = {
+      ...relanceConfig,
+      [cat]: {
+        ...relanceConfig[cat],
+        [field]: v,
+      },
+    };
+    setRelanceConfig(next);
+  };
+
+  const saveRelanceCfg = async () => {
+    setAdminMsg("");
+    setAdminBusy(true);
+    try {
+      await persistRelanceConfig(relanceConfig);
+      setAdminMsg("Délais enregistrés.");
+    } catch (err) {
+      console.error("saveRelanceCfg", err);
+      setAdminMsg("Erreur : " + (err.message || "save config"));
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  // ---------- DASHBOARD ----------
+
+  const today0 = useMemo(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+  }, []);
+
+  const dueClientsByCategory = (cat) => {
+    const list = clientsRaw
+      .filter((c) => c.category === cat)
+      .filter((c) => c.status !== "closed")
+      .filter((c) => {
+        const nd = getNextDueDate(c);
+        if (!nd) return false;
+        const d = new Date(nd);
+        d.setHours(0, 0, 0, 0);
+        return d <= today0;
+      })
+      .sort((a, b) => {
+        const aN = getNextDueDate(a);
+        const bN = getNextDueDate(b);
+        if (aN && bN) return aN - bN;
+        if (aN && !bN) return -1;
+        if (!aN && bN) return 1;
+        return 0;
+      });
+
+    return list;
+  };
+
+  const top5SellerDue = useMemo(() => dueClientsByCategory("seller").slice(0, 5), [clientsRaw, relanceConfig, today0]);
+  const top5BuyerDue = useMemo(() => dueClientsByCategory("buyer").slice(0, 5), [clientsRaw, relanceConfig, today0]);
+  const top5AfterDue = useMemo(() => dueClientsByCategory("after").slice(0, 5), [clientsRaw, relanceConfig, today0]);
+
+  const activeCounts = useMemo(() => {
+    const active = clientsRaw.filter((c) => c.status !== "closed");
+    return {
+      total: active.length,
+      seller: active.filter((c) => c.category === "seller").length,
+      buyer: active.filter((c) => c.category === "buyer").length,
+      after: active.filter((c) => c.category === "after").length,
+    };
+  }, [clientsRaw]);
+
+  const computeCompleteness = (c) => {
+    const filled = (v) => v !== null && v !== undefined && String(v).trim() !== "";
+
+    // “champs bien remplis” : je prends une liste courte mais significative
+    if (c.category === "seller") {
+      const fields = [
+        filled(c.last_name),
+        filled(c.phone),
+        filled(c.property_address),
+        filled(c.project_horizon),
+        filled(c.consultant_feeling),
+        filled(c.seller_kind),
+      ];
+      return fields.filter(Boolean).length / fields.length;
+    }
+    if (c.category === "buyer") {
+      const fields = [
+        filled(c.last_name),
+        filled(c.phone),
+        filled(c.area),
+        filled(c.budget_max),
+        filled(c.min_surface),
+      ];
+      return fields.filter(Boolean).length / fields.length;
+    }
+    // after
+    const fields = [
+      filled(c.last_name),
+      filled(c.phone),
+      filled(c.after_address),
+      filled(c.created_at),
+      filled(c.client_birthday),
+      filled(c.context),
+    ];
+    return fields.filter(Boolean).length / fields.length;
+  };
+
+  const scoreInfo = useMemo(() => {
+    const active = clientsRaw.filter((c) => c.status !== "closed");
+    const hasSeller = active.some((c) => c.category === "seller");
+    const hasBuyer = active.some((c) => c.category === "buyer");
+    const hasAfter = active.some((c) => c.category === "after");
+
+    const typeUsage =
+      (hasSeller ? 0.5 : 0) +
+      (hasBuyer ? 0.25 : 0) +
+      (hasAfter ? 0.25 : 0);
+
+    // ponctualité : pénalise si des clients restent >24h “à relancer”
+    const dueNow = active.filter((c) => {
+      const nd = getNextDueDate(c);
+      if (!nd) return false;
+      const d = new Date(nd);
+      d.setHours(0, 0, 0, 0);
+      return d <= today0;
+    });
+
+    const stale = dueNow.filter((c) => {
+      const nd = getNextDueDate(c);
+      if (!nd) return false;
+      const d = new Date(nd);
+      d.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((d.getTime() - today0.getTime()) / (1000 * 60 * 60 * 24));
+      return diffDays <= -2; // <= J-2 => >24h de retard
+    });
+
+    const timelinessFactor = dueNow.length === 0 ? 1 : Math.max(0, 1 - stale.length / dueNow.length);
+
+    // complétude
+    const completenessAvg =
+      active.length === 0
+        ? 0
+        : active.reduce((acc, c) => acc + computeCompleteness(c), 0) / active.length;
+
+    // score final
+    const raw =
+      10 *
+      typeUsage *
+      (0.7 + 0.3 * timelinessFactor) *
+      (0.6 + 0.4 * completenessAvg);
+
+    const score = Math.max(0, Math.min(10, raw));
+    const reasons = [];
+
+    if (!hasSeller) reasons.push("Ajoute au moins 1 vendeur/bailleur (poids 50%).");
+    if (!hasBuyer) reasons.push("Ajoute au moins 1 acquéreur (poids 25%).");
+    if (!hasAfter) reasons.push("Ajoute au moins 1 après-vente (poids 25%).");
+
+    if (stale.length > 0) reasons.push(`${stale.length} client(s) restent >24h en “à relancer”.`);
+
+    if (active.length > 0) {
+      const pct = Math.round(completenessAvg * 100);
+      if (pct < 100) reasons.push(`Champs incomplets (≈ ${pct}% complétés).`);
+    } else {
+      reasons.push("Aucun client actif : la note ne peut pas monter.");
+    }
+
+    const tips = [];
+    if (stale.length > 0) tips.push("Objectif : zéro client au-delà de J+1 en “à relancer”.");
+    if (active.length > 0 && completenessAvg < 1) tips.push("Complète les champs clés (téléphone, adresse, etc.).");
+    if (!hasSeller || !hasBuyer || !hasAfter) tips.push("Utilise les 3 types pour viser 10/10.");
+
+    return { score: score.toFixed(1), reasons, tips };
+  }, [clientsRaw, relanceConfig, today0]);
+
+  const DashboardCard = ({ title, list, onGo }) => {
+  return (
+    <div className="dash-card">
+      <div className="dash-card-head">
+        <div className="dash-title">{title}</div>
+      </div>
+
+      {list.length === 0 ? (
+        <div className="dash-empty">Aucun client à relancer.</div>
+      ) : (
+        <ul className="dash-list">
+          {list.map((c) => {
+            const name =
+              (c.first_name || "") +
+                (c.first_name && c.last_name ? " " : "") +
+                (c.last_name || "") ||
+              "(Sans nom)";
+            const info = getFollowupInfo(c);
+            return (
+              <li key={c.id} className="dash-item">
+                <div className="dash-item-name">{name}</div>
+                <div className="dash-item-sub">{info.delayLabel || "—"}</div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <div className="dash-card-actions">
+        <button
+          type="button"
+          className="btn-outline-small"
+          onClick={onGo}
+        >
+          Aller à “à relancer”
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
 
   // ---------- RENDU ----------
 
@@ -825,7 +1740,6 @@ function App() {
     );
   }
 
-  // Écran de définition d'un nouveau mot de passe après clic sur le lien
   if (isResetFlow && session) {
     return (
       <div className="app auth-screen">
@@ -847,9 +1761,7 @@ function App() {
               />
             </label>
 
-            {resetErrorMsg && (
-              <p className="error-text">{resetErrorMsg}</p>
-            )}
+            {resetErrorMsg && <p className="error-text">{resetErrorMsg}</p>}
             {resetDone && (
               <p style={{ fontSize: "0.85rem", color: "#15803d" }}>
                 Mot de passe mis à jour avec succès.
@@ -952,13 +1864,19 @@ function App() {
           <span className="user-info">
             Connecté : {session.user.email}
             {isAdmin && " (Admin)"}
+            {isManager && " (Manager)"}
           </span>
 
+          <button
+            className="btn-secondary"
+            onClick={() => setPage(page === "clients" ? "dashboard" : "clients")}
+            type="button"
+          >
+            {page === "clients" ? "Tableau de bord" : "Clients"}
+          </button>
+
           {isAdmin && (
-            <button
-              className="btn-secondary"
-              onClick={() => setShowAdminPanel(true)}
-            >
+            <button className="btn-secondary" onClick={() => setShowAdminPanel(true)}>
               Paramètres
             </button>
           )}
@@ -971,433 +1889,357 @@ function App() {
 
       {/* Contenu */}
       <main className="main">
-        {/* Ligne du haut : onglets + statuts */}
-        <div className="top-bar">
-          <div className="tabs">
-            <button
-              className={
-                "tab-button" +
-                (currentTab === "vendeur" ? " tab-button-active" : "")
-              }
-              onClick={() => setCurrentTab("vendeur")}
-            >
-              Vendeur/Bailleur
-            </button>
-            <button
-              className={
-                "tab-button" +
-                (currentTab === "acquereur" ? " tab-button-active" : "")
-              }
-              onClick={() => setCurrentTab("acquereur")}
-            >
-              Acquéreur
-            </button>
-            <button
-              className={
-                "tab-button" +
-                (currentTab === "apresvente" ? " tab-button-active" : "")
-              }
-              onClick={() => setCurrentTab("apresvente")}
-            >
-              Après-vente
-            </button>
-            <button
-              className={
-                "tab-button" +
-                (currentTab === "tous" ? " tab-button-active" : "")
-              }
-              onClick={() => setCurrentTab("tous")}
-            >
-              Tous les types
-            </button>
-          </div>
-
-          <div className="status-tabs">
-            <button
-              className={
-                "status-button" +
-                (statusFilter === "arelancer" ? " status-button-active" : "")
-              }
-              onClick={() => setStatusFilter("arelancer")}
-            >
-              À relancer
-            </button>
-            <button
-              className={
-                "status-button" +
-                (statusFilter === "encours" ? " status-button-active" : "")
-              }
-              onClick={() => setStatusFilter("encours")}
-            >
-              En cours
-            </button>
-            <button
-              className={
-                "status-button" +
-                (statusFilter === "tous" ? " status-button-active" : "")
-              }
-              onClick={() => setStatusFilter("tous")}
-            >
-              Tous
-            </button>
-            <button
-              className={
-                "status-button" +
-                (statusFilter === "clos" ? " status-button-active" : "")
-              }
-              onClick={() => setStatusFilter("clos")}
-            >
-              Clos
-            </button>
-          </div>
-        </div>
-
-        {/* Filtres seconde ligne */}
-        <div className="filters-row">
-          {isAdmin && (
-            <div className="filter-group">
-              <label htmlFor="commercialFilter">Filtrer par commercial :</label>
-              <select
-                id="commercialFilter"
-                value={commercialFilter}
-                onChange={(e) => setCommercialFilter(e.target.value)}
-              >
-                <option value="Tous">Tous</option>
-                {commercials.map((c) => (
-                  <option key={c.id} value={c.email}>
-                    {c.email}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <button className="btn-primary" onClick={openAddModal}>
-            + Ajouter
-          </button>
-        </div>
-
-        <h2 className="section-title">
-          {currentTab === "vendeur" && "Vendeur / Bailleur & Estimation"}
-          {currentTab === "acquereur" && "Acquéreur"}
-          {currentTab === "apresvente" && "Après-vente"}
-          {currentTab === "tous" && "Tous les types"}
-        </h2>
-
-        {lastError && <p className="error-text">Erreur : {lastError}</p>}
-
-        {isLoading ? (
-          <p>Chargement…</p>
-        ) : clients.length === 0 ? (
-          <p>Aucun client pour ces filtres.</p>
-        ) : (
-          <div className="clients-list">
-            {clients.map((c) => {
-              const name =
-                (c.first_name || "") +
-                  (c.first_name && c.last_name ? " " : "") +
-                  (c.last_name || "") || "(Sans nom)";
-              const commercialEmail = getCommercialEmail(c.owner_id);
-              const catLabel = humanCategory(c.category);
-              const statutLabel = humanStatus(c.status);
-              const { label: nextLabel, delayLabel, diffDays } =
-                getFollowupInfo(c);
-              const comments = commentsByClient[c.id] || [];
-
-              const isBuyer = c.category === "buyer";
-              const isAfter = c.category === "after";
-
-              const delayStyle =
-                diffDays == null
-                  ? {}
-                  : diffDays < 0
-                  ? {
-                      marginLeft: 6,
-                      padding: "2px 8px",
-                      borderRadius: 999,
-                      background: "#fef2f2",
-                      color: "#b91c1c",
-                      fontSize: "0.75rem",
-                    }
-                  : {
-                      marginLeft: 6,
-                      padding: "2px 8px",
-                      borderRadius: 999,
-                      background: "#eff6ff",
-                      color: "#1d4ed8",
-                      fontSize: "0.75rem",
-                    };
-
-              return (
-                <div key={c.id} className="client-card">
-                  <div className="client-header">
-                    <div>
-                      {isAdmin && (
-                        <div className="client-commercial">
-                          Commercial : {commercialEmail || "—"}
-                        </div>
-                      )}
-                      <div className="client-name">{name}</div>
-                      {c.email && (
-                        <div className="client-line">{c.email}</div>
-                      )}
-                      {c.phone && (
-                        <div className="client-line">{c.phone}</div>
-                      )}
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      {statutLabel && (
-                        <div className="badge-status">{statutLabel}</div>
-                      )}
-                      {nextLabel && (
-                        <div
-                          style={{
-                            marginTop: 6,
-                            fontSize: "0.8rem",
-                            color: "#4b5563",
-                          }}
-                        >
-                          {nextLabel}
-                          {delayLabel && (
-                            <span style={delayStyle}>{delayLabel}</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="client-body">
-                    <div className="field-row">
-                      <span className="field-key">Catégorie</span>
-                      <span className="field-value">{catLabel}</span>
-                    </div>
-
-                    {c.contact_origin && (
-                      <div className="field-row">
-                        <span className="field-key">Origine</span>
-                        <span className="field-value">
-                          {c.contact_origin}
-                        </span>
-                      </div>
-                    )}
-
-                    {!isBuyer && !isAfter && c.estimation_date && (
-                      <div className="field-row">
-                        <span className="field-key">Estimation</span>
-                        <span className="field-value">
-                          {formatDate(c.estimation_date)}
-                        </span>
-                      </div>
-                    )}
-
-                    {isBuyer && c.acquisition_date && (
-                      <div className="field-row">
-                        <span className="field-key">Date enregistrement</span>
-                        <span className="field-value">
-                          {formatDate(c.acquisition_date)}
-                        </span>
-                      </div>
-                    )}
-
-                    {isAfter && c.created_at && (
-                      <div className="field-row">
-                        <span className="field-key">Date de vente</span>
-                        <span className="field-value">
-                          {formatDate(c.created_at)}
-                        </span>
-                      </div>
-                    )}
-
-                    {!isBuyer && !isAfter && c.property_address && (
-                      <div className="field-row">
-                        <span className="field-key">Adresse bien</span>
-                        <span className="field-value">
-                          {c.property_address}
-                        </span>
-                      </div>
-                    )}
-
-                    {isAfter && c.after_address && (
-                      <div className="field-row">
-                        <span className="field-key">Adresse</span>
-                        <span className="field-value">
-                          {c.after_address}
-                        </span>
-                      </div>
-                    )}
-
-                    {isBuyer && c.area && (
-                      <div className="field-row">
-                        <span className="field-key">Secteur</span>
-                        <span className="field-value">{c.area}</span>
-                      </div>
-                    )}
-
-                    {isBuyer && (c.budget_max || c.min_surface) && (
-                      <div className="field-row">
-                        <span className="field-key">Projet</span>
-                        <span className="field-value">
-                          {c.budget_max && `Budget max : ${c.budget_max} `}
-                          {c.min_surface &&
-                            `— Surface min : ${c.min_surface} m²`}
-                          {c.bedrooms &&
-                            ` — Chambres : ${c.bedrooms}`}
-                          {c.also_owner && " — Aussi propriétaire"}
-                        </span>
-                      </div>
-                    )}
-
-                    {!isBuyer && !isAfter && c.project_horizon && (
-                      <div className="field-row">
-                        <span className="field-key">Horizon projet</span>
-                        <span className="field-value">
-                          {c.project_horizon}
-                        </span>
-                      </div>
-                    )}
-
-                    {c.consultant_feeling && (
-                      <div className="field-row">
-                        <span className="field-key">Ressenti</span>
-                        <span className="field-value">
-                          {c.consultant_feeling}
-                        </span>
-                      </div>
-                    )}
-
-                    {isAfter && c.client_birthday && (
-                      <div className="field-row">
-                        <span className="field-key">
-                          Anniversaire client
-                        </span>
-                        <span className="field-value">
-                          {formatDate(c.client_birthday)}
-                        </span>
-                      </div>
-                    )}
-
-                    {isAfter && c.context && (
-                      <div className="field-row">
-                        <span className="field-key">Contexte</span>
-                        <span className="field-value">{c.context}</span>
-                      </div>
-                    )}
-
-                    <div style={{ marginTop: 10 }}>
-                      <div
-                        style={{
-                          fontSize: "0.8rem",
-                          marginBottom: comments.length ? 4 : 8,
-                          color: "#111827",
-                          fontWeight: 600,
-                        }}
-                      >
-                        Historique des relances
-                      </div>
-
-                      {comments.length > 0 && (
-                        <ul
-                          style={{
-                            listStyle: "none",
-                            paddingLeft: 0,
-                            marginTop: 0,
-                            marginBottom: 6,
-                            fontSize: "0.8rem",
-                            color: "#4b5563",
-                          }}
-                        >
-                          {comments.map((n) => (
-                            <li key={n.id}>
-                              <strong>{formatDate(n.created_at)} :</strong>{" "}
-                              {n.body}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-
-                      <textarea
-                        rows={2}
-                        placeholder="Ajouter un commentaire (ex : relancé, client en réflexion…)"
-                        value={commentInputs[c.id] || ""}
-                        onChange={(e) =>
-                          handleCommentInputChange(c.id, e.target.value)
-                        }
-                        style={{
-                          width: "100%",
-                          borderRadius: 10,
-                          border: "1px solid #d1d5db",
-                          padding: "6px 8px",
-                          fontSize: "0.85rem",
-                          resize: "vertical",
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="client-footer">
-                    {c.status === "active" && (
-                      <>
-                        <button
-                          className="btn-outline-small"
-                          onClick={() => handleValidateRelance(c)}
-                        >
-                          Valider relance
-                        </button>
-                        <button
-                          className="btn-outline-small"
-                          onClick={() => openEditModal(c)}
-                        >
-                          Modifier
-                        </button>
-                      </>
-                    )}
-                    <button
-                      className="btn-outline-small"
-                      onClick={() => openClosureModal(c)}
-                    >
-                      Clôturer…
-                    </button>
-                  </div>
+        {page === "dashboard" ? (
+          <>
+          <h2 className="dash-page-title">Tableau de bord</h2>
+            <div className="dash-top">
+              <div className="dash-kpis">
+                <div className="kpi">
+                  <div className="kpi-label">Total clients actifs</div>
+                  <div className="kpi-value">{activeCounts.total}</div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+                <div className="kpi">
+                  <div className="kpi-label">Vendeur/Bailleur</div>
+                  <div className="kpi-value">{activeCounts.seller}</div>
+                </div>
+                <div className="kpi">
+                  <div className="kpi-label">Acquéreur</div>
+                  <div className="kpi-value">{activeCounts.buyer}</div>
+                </div>
+                <div className="kpi">
+                  <div className="kpi-label">Après-vente</div>
+                  <div className="kpi-value">{activeCounts.after}</div>
+                </div>
+              </div>
 
-        <footer className="app-footer">
-          © Benjamin Rondreux — Osmoz Dev.
-        </footer>
+              <div className="dash-score">
+                <div className="dash-score-title">Note d’utilisation</div>
+                <div className="dash-score-value">{scoreInfo.score}/10</div>
+                <div className="dash-score-sub">
+                  {scoreInfo.reasons.slice(0, 2).join(" ")}
+                </div>
+                {scoreInfo.tips.length > 0 && (
+                  <div className="dash-score-tips">
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Pour l’améliorer :</div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {scoreInfo.tips.map((t, i) => (
+                        <li key={i}>{t}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="dash-grid">
+              <DashboardCard
+  title="Vendeur/Bailleur — à relancer (top 5)"
+  list={top5SellerDue}
+  onGo={() => {
+    setPage("clients");
+    setCurrentTab("vendeur");
+    setStatusFilter("arelancer");
+    setCommercialFilter("Tous");
+    setViewMode("detail");
+  }}
+/>
+              <DashboardCard
+  title="Acquéreur — à relancer (top 5)"
+  list={top5BuyerDue}
+  onGo={() => {
+    setPage("clients");
+    setCurrentTab("acquereur");
+    setStatusFilter("arelancer");
+    setCommercialFilter("Tous");
+    setViewMode("detail");
+  }}
+/>
+              <DashboardCard
+  title="Après-vente — à relancer (top 5)"
+  list={top5AfterDue}
+  onGo={() => {
+    setPage("clients");
+    setCurrentTab("apresvente");
+    setStatusFilter("arelancer");
+    setCommercialFilter("Tous");
+    setViewMode("detail");
+  }}
+/>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Ligne du haut : onglets + statuts */}
+            <div className="top-bar">
+              <div className="tabs">
+                <button
+                  className={"tab-button" + (currentTab === "vendeur" ? " tab-button-active" : "")}
+                  onClick={() => setCurrentTab("vendeur")}
+                >
+                  Vendeur/Bailleur
+                </button>
+                <button
+                  className={"tab-button" + (currentTab === "acquereur" ? " tab-button-active" : "")}
+                  onClick={() => setCurrentTab("acquereur")}
+                >
+                  Acquéreur
+                </button>
+                <button
+                  className={"tab-button" + (currentTab === "apresvente" ? " tab-button-active" : "")}
+                  onClick={() => setCurrentTab("apresvente")}
+                >
+                  Après-vente
+                </button>
+                <button
+                  className={"tab-button" + (currentTab === "tous" ? " tab-button-active" : "")}
+                  onClick={() => setCurrentTab("tous")}
+                >
+                  Tous les types
+                </button>
+              </div>
+
+              <div className="status-tabs">
+                <button
+                  className={"status-button" + (statusFilter === "arelancer" ? " status-button-active" : "")}
+                  onClick={() => setStatusFilter("arelancer")}
+                >
+                  À relancer
+                </button>
+                <button
+                  className={"status-button" + (statusFilter === "encours" ? " status-button-active" : "")}
+                  onClick={() => setStatusFilter("encours")}
+                >
+                  En cours
+                </button>
+                <button
+                  className={"status-button" + (statusFilter === "tous" ? " status-button-active" : "")}
+                  onClick={() => setStatusFilter("tous")}
+                >
+                  Tous
+                </button>
+                <button
+                  className={"status-button" + (statusFilter === "clos" ? " status-button-active" : "")}
+                  onClick={() => setStatusFilter("clos")}
+                >
+                  Clos
+                </button>
+              </div>
+            </div>
+
+            {/* Filtres seconde ligne */}
+            <div className="filters-row">
+              {(isAdmin || isManager) && (
+                <div className="filter-group">
+                  <label htmlFor="commercialFilter">Filtrer par commercial :</label>
+                  <select
+                    id="commercialFilter"
+                    value={commercialFilter}
+                    onChange={(e) => setCommercialFilter(e.target.value)}
+                  >
+                    <option value="Tous">Tous</option>
+
+                    {isAdmin &&
+                      commercials.map((c) => (
+                        <option key={c.id} value={c.email}>
+                          {c.email}
+                        </option>
+                      ))}
+
+                    {isManager &&
+                      commercials
+                        .filter((p) => p.id === session.user.id || managedUserIds.includes(p.id))
+                        .map((c) => (
+                          <option key={c.id} value={c.email}>
+                            {c.email}
+                          </option>
+                        ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="view-toggle">
+                <button
+                  className={"view-button" + (viewMode === "detail" ? " view-button-active" : "")}
+                  onClick={() => setViewMode("detail")}
+                  type="button"
+                >
+                  Détail
+                </button>
+                <button
+                  className={"view-button" + (viewMode === "compact" ? " view-button-active" : "")}
+                  onClick={() => setViewMode("compact")}
+                  type="button"
+                >
+                  Compact
+                </button>
+              </div>
+
+              <button className="btn-primary" onClick={openAddModal}>
+                + Ajouter
+              </button>
+            </div>
+
+            {lastError && <p className="error-text">Erreur : {lastError}</p>}
+
+            {/* Sections + compteurs */}
+            {currentTab === "tous" ? (
+              <>
+                {renderClientsBlock(sellers, makeSectionTitle(sellerTitle, sellers.length), "seller")}
+                {renderClientsBlock(buyers, makeSectionTitle(buyerTitle, buyers.length), "buyer")}
+                {renderClientsBlock(afters, makeSectionTitle(afterTitle, afters.length), "after")}
+              </>
+            ) : currentTab === "vendeur" ? (
+              renderClientsBlock(sellers, makeSectionTitle(sellerTitle, sellers.length), "seller")
+            ) : currentTab === "acquereur" ? (
+              renderClientsBlock(buyers, makeSectionTitle(buyerTitle, buyers.length), "buyer")
+            ) : (
+              renderClientsBlock(afters, makeSectionTitle(afterTitle, afters.length), "after")
+            )}
+
+            <footer className="app-footer">
+              © Benjamin Rondreux — Keepintouch 2.1 — 2026
+            </footer>
+          </>
+        )}
       </main>
 
       {/* Modal admin */}
       {showAdminPanel && isAdmin && (
-        <div
-          className="admin-modal-backdrop"
-          onClick={() => setShowAdminPanel(false)}
-        >
-          <div
-            className="admin-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="admin-modal-backdrop" onClick={() => setShowAdminPanel(false)}>
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
             <h2>Paramètres administrateur</h2>
-            <p>
-              (À venir : délais de relance par type de client, gestion des
-              commerciaux, travail en équipe / partage de portefeuilles, etc.)
+
+            {adminMsg && (
+              <p style={{ marginTop: 8, color: adminMsg.startsWith("Erreur") ? "#b91c1c" : "#15803d" }}>
+                {adminMsg}
+              </p>
+            )}
+
+            <h3>Utilisateurs</h3>
+            <p style={{ fontSize: "0.85rem", color: "#4b5563", marginTop: 4 }}>
+              Désactiver un utilisateur le masque dans l’usage. Réaffecter permet de transférer son portefeuille.
             </p>
 
-            <h3>Commerciaux</h3>
-            <ul>
-              {profiles.map((p) => (
-                <li key={p.id}>{p.email}</li>
-              ))}
-            </ul>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>Désactiver / réactiver</div>
+                <ul style={{ paddingLeft: 18, margin: 0, fontSize: "0.9rem" }}>
+                  {profiles.filter(p => p.is_active !== false).map((p) => (
+                    <li key={p.id} style={{ marginBottom: 6 }}>
+                      <span style={{ fontWeight: 600 }}>{p.email}</span>{" "}
+                      <span style={{ color: "#6b7280" }}>
+                        — {p.is_active === false ? "désactivé" : "actif"}
+                      </span>
+                      {p.id !== session.user.id && (
+                        <button
+                          type="button"
+                          className="btn-outline-small"
+                          style={{ marginLeft: 8 }}
+                          disabled={adminBusy}
+                          onClick={() => toggleUserActive(p.id, p.is_active === false)}
+                          title={p.is_active === false ? "Réactiver" : "Désactiver"}
+                        >
+                          {p.is_active === false ? "Réactiver" : "Désactiver"}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
 
-            <button
-              className="btn-outline"
-              onClick={() => setShowAdminPanel(false)}
-            >
-              Fermer
-            </button>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>Réaffecter des clients</div>
+                <label style={{ display: "block", fontSize: "0.85rem", marginBottom: 6 }}>
+                  De :
+                  <select
+                    value={reassignFrom}
+                    onChange={(e) => setReassignFrom(e.target.value)}
+                    style={{ width: "100%", marginTop: 4 }}
+                  >
+                    <option value="">—</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: "block", fontSize: "0.85rem", marginBottom: 10 }}>
+                  Vers :
+                  <select
+                    value={reassignTo}
+                    onChange={(e) => setReassignTo(e.target.value)}
+                    style={{ width: "100%", marginTop: 4 }}
+                  >
+                    <option value="">—</option>
+                    {profiles
+                      .filter((p) => p.is_active !== false)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.email}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+
+                <button
+                  type="button"
+                  className="btn-outline"
+                  disabled={adminBusy}
+                  onClick={reassignClientsToUser}
+                >
+                  Réaffecter
+                </button>
+              </div>
+            </div>
+
+            <h3 style={{ marginTop: 18 }}>Délais de relance</h3>
+            <p style={{ fontSize: "0.85rem", color: "#4b5563", marginTop: 4 }}>
+              1ère relance = délai après l’enregistrement (estimation / acquisition / vente).
+              Relance par défaut = si tu valides sans saisir de date.
+            </p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 10 }}>
+              {["seller", "buyer", "after"].map((cat) => (
+                <div key={cat} className="dash-card" style={{ padding: 12 }}>
+                  <div className="dash-title" style={{ marginBottom: 10 }}>
+                    {cat === "seller" ? "Vendeur/Bailleur" : cat === "buyer" ? "Acquéreur" : "Après-vente"}
+                  </div>
+
+                  <label style={{ fontSize: "0.85rem", display: "block", marginBottom: 8 }}>
+                    1ère relance (jours)
+                    <input
+                      type="number"
+                      min="0"
+                      value={relanceConfig?.[cat]?.initial_days ?? 15}
+                      onChange={(e) => updateRelanceCfgField(cat, "initial_days", e.target.value)}
+                      style={{ width: "100%", marginTop: 4 }}
+                    />
+                  </label>
+
+                  <label style={{ fontSize: "0.85rem", display: "block" }}>
+                    Relance par défaut (jours)
+                    <input
+                      type="number"
+                      min="0"
+                      value={relanceConfig?.[cat]?.default_next_days ?? 14}
+                      onChange={(e) => updateRelanceCfgField(cat, "default_next_days", e.target.value)}
+                      style={{ width: "100%", marginTop: 4 }}
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 12 }}>
+              <button className="btn-outline" onClick={() => setShowAdminPanel(false)}>
+                Fermer
+              </button>
+              <button className="btn-primary" onClick={saveRelanceCfg} disabled={adminBusy}>
+                Enregistrer les délais
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1411,26 +2253,15 @@ function App() {
             setEditingClientId(null);
           }}
         >
-          <div
-            className="admin-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
             <h2>{editingClientId ? "Modifier le client" : "Nouveau client"}</h2>
             <form className="auth-form" onSubmit={handleSaveClient}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 12,
-                }}
-              >
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <label>
                   Type de client
                   <select
                     value={newClient.category}
-                    onChange={(e) =>
-                      handleNewClientChange("category", e.target.value)
-                    }
+                    onChange={(e) => handleNewClientChange("category", e.target.value)}
                   >
                     <option value="seller">Vendeur / Bailleur</option>
                     <option value="buyer">Acquéreur</option>
@@ -1443,12 +2274,7 @@ function App() {
                   <input
                     type="text"
                     value={newClient.contact_origin}
-                    onChange={(e) =>
-                      handleNewClientChange(
-                        "contact_origin",
-                        e.target.value
-                      )
-                    }
+                    onChange={(e) => handleNewClientChange("contact_origin", e.target.value)}
                   />
                 </label>
 
@@ -1457,9 +2283,7 @@ function App() {
                   <input
                     type="text"
                     value={newClient.first_name}
-                    onChange={(e) =>
-                      handleNewClientChange("first_name", e.target.value)
-                    }
+                    onChange={(e) => handleNewClientChange("first_name", e.target.value)}
                   />
                 </label>
 
@@ -1468,9 +2292,7 @@ function App() {
                   <input
                     type="text"
                     value={newClient.last_name}
-                    onChange={(e) =>
-                      handleNewClientChange("last_name", e.target.value)
-                    }
+                    onChange={(e) => handleNewClientChange("last_name", e.target.value)}
                     required
                   />
                 </label>
@@ -1480,9 +2302,7 @@ function App() {
                   <input
                     type="email"
                     value={newClient.email}
-                    onChange={(e) =>
-                      handleNewClientChange("email", e.target.value)
-                    }
+                    onChange={(e) => handleNewClientChange("email", e.target.value)}
                   />
                 </label>
 
@@ -1491,12 +2311,23 @@ function App() {
                   <input
                     type="text"
                     value={newClient.phone}
-                    onChange={(e) =>
-                      handleNewClientChange("phone", e.target.value)
-                    }
+                    onChange={(e) => handleNewClientChange("phone", e.target.value)}
                     required
                   />
                 </label>
+
+                {newClient.category === "seller" && (
+                  <label>
+                    Vendeur / Bailleur
+                    <select
+                      value={newClient.seller_kind}
+                      onChange={(e) => handleNewClientChange("seller_kind", e.target.value)}
+                    >
+                      <option>Vendeur</option>
+                      <option>Bailleur</option>
+                    </select>
+                  </label>
+                )}
 
                 {newClient.category === "seller" && (
                   <label>
@@ -1504,12 +2335,7 @@ function App() {
                     <input
                       type="date"
                       value={newClient.estimation_date}
-                      onChange={(e) =>
-                        handleNewClientChange(
-                          "estimation_date",
-                          e.target.value
-                        )
-                      }
+                      onChange={(e) => handleNewClientChange("estimation_date", e.target.value)}
                     />
                   </label>
                 )}
@@ -1520,12 +2346,7 @@ function App() {
                     <input
                       type="date"
                       value={newClient.acquisition_date}
-                      onChange={(e) =>
-                        handleNewClientChange(
-                          "acquisition_date",
-                          e.target.value
-                        )
-                      }
+                      onChange={(e) => handleNewClientChange("acquisition_date", e.target.value)}
                     />
                   </label>
                 )}
@@ -1536,9 +2357,7 @@ function App() {
                     <input
                       type="date"
                       value={newClient.created_at}
-                      onChange={(e) =>
-                        handleNewClientChange("created_at", e.target.value)
-                      }
+                      onChange={(e) => handleNewClientChange("created_at", e.target.value)}
                     />
                   </label>
                 )}
@@ -1548,40 +2367,35 @@ function App() {
                   <input
                     type="date"
                     value={newClient.manual_next_due_date}
-                    onChange={(e) =>
-                      handleNewClientChange(
-                        "manual_next_due_date",
-                        e.target.value
-                      )
-                    }
+                    onChange={(e) => handleNewClientChange("manual_next_due_date", e.target.value)}
                   />
                 </label>
 
                 {newClient.category !== "buyer" && (
                   <label style={{ gridColumn: "1 / span 2" }}>
-                    {newClient.category === "after"
-                      ? "Adresse (après-vente)"
-                      : "Adresse du bien *"}
+                    {newClient.category === "after" ? "Adresse (après-vente)" : "Adresse du bien *"}
                     <input
                       type="text"
-                      value={
-                        newClient.category === "after"
-                          ? newClient.after_address
-                          : newClient.property_address
-                      }
+                      value={newClient.category === "after" ? newClient.after_address : newClient.property_address}
                       onChange={(e) => {
                         if (newClient.category === "after") {
-                          handleNewClientChange(
-                            "after_address",
-                            e.target.value
-                          );
+                          handleNewClientChange("after_address", e.target.value);
                         } else {
-                          handleNewClientChange(
-                            "property_address",
-                            e.target.value
-                          );
+                          handleNewClientChange("property_address", e.target.value);
                         }
                       }}
+                    />
+                  </label>
+                )}
+
+                {newClient.category === "seller" && (
+                  <label style={{ gridColumn: "1 / span 2" }}>
+                    Raison de la vente / mise en location
+                    <input
+                      type="text"
+                      value={newClient.sale_reason}
+                      onChange={(e) => handleNewClientChange("sale_reason", e.target.value)}
+                      placeholder="ex : mutation, divorce, succession, investissement…"
                     />
                   </label>
                 )}
@@ -1593,9 +2407,7 @@ function App() {
                       <input
                         type="text"
                         value={newClient.area}
-                        onChange={(e) =>
-                          handleNewClientChange("area", e.target.value)
-                        }
+                        onChange={(e) => handleNewClientChange("area", e.target.value)}
                       />
                     </label>
                     <label>
@@ -1603,12 +2415,7 @@ function App() {
                       <input
                         type="text"
                         value={newClient.budget_max}
-                        onChange={(e) =>
-                          handleNewClientChange(
-                            "budget_max",
-                            e.target.value
-                          )
-                        }
+                        onChange={(e) => handleNewClientChange("budget_max", e.target.value)}
                       />
                     </label>
                     <label>
@@ -1616,12 +2423,7 @@ function App() {
                       <input
                         type="text"
                         value={newClient.min_surface}
-                        onChange={(e) =>
-                          handleNewClientChange(
-                            "min_surface",
-                            e.target.value
-                          )
-                        }
+                        onChange={(e) => handleNewClientChange("min_surface", e.target.value)}
                       />
                     </label>
                     <label>
@@ -1629,12 +2431,7 @@ function App() {
                       <input
                         type="text"
                         value={newClient.bedrooms}
-                        onChange={(e) =>
-                          handleNewClientChange(
-                            "bedrooms",
-                            e.target.value
-                          )
-                        }
+                        onChange={(e) => handleNewClientChange("bedrooms", e.target.value)}
                       />
                     </label>
                     <label
@@ -1648,12 +2445,7 @@ function App() {
                       <input
                         type="checkbox"
                         checked={!!newClient.also_owner}
-                        onChange={(e) =>
-                          handleNewClientChange(
-                            "also_owner",
-                            e.target.checked
-                          )
-                        }
+                        onChange={(e) => handleNewClientChange("also_owner", e.target.checked)}
                         style={{ marginRight: 6 }}
                       />
                       Acquéreur propriétaire (potentiel vendeur)
@@ -1668,25 +2460,15 @@ function App() {
                       <input
                         type="date"
                         value={newClient.client_birthday}
-                        onChange={(e) =>
-                          handleNewClientChange(
-                            "client_birthday",
-                            e.target.value
-                          )
-                        }
+                        onChange={(e) => handleNewClientChange("client_birthday", e.target.value)}
                       />
                     </label>
                     <label style={{ gridColumn: "1 / span 2" }}>
                       Contexte
                       <textarea
-                        rows={3}
+                        rows={2}
                         value={newClient.context}
-                        onChange={(e) =>
-                          handleNewClientChange(
-                            "context",
-                            e.target.value
-                          )
-                        }
+                        onChange={(e) => handleNewClientChange("context", e.target.value)}
                       />
                     </label>
                   </>
@@ -1697,12 +2479,7 @@ function App() {
                     Horizon du projet
                     <select
                       value={newClient.project_horizon}
-                      onChange={(e) =>
-                        handleNewClientChange(
-                          "project_horizon",
-                          e.target.value
-                        )
-                      }
+                      onChange={(e) => handleNewClientChange("project_horizon", e.target.value)}
                     >
                       <option>Court terme</option>
                       <option>Moyen terme</option>
@@ -1715,26 +2492,14 @@ function App() {
                 <label style={{ gridColumn: "1 / span 2" }}>
                   Ressenti / commentaire
                   <textarea
-                    rows={3}
+                    rows={2}
                     value={newClient.consultant_feeling}
-                    onChange={(e) =>
-                      handleNewClientChange(
-                        "consultant_feeling",
-                        e.target.value
-                      )
-                    }
+                    onChange={(e) => handleNewClientChange("consultant_feeling", e.target.value)}
                   />
                 </label>
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  gap: 8,
-                  marginTop: 8,
-                }}
-              >
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
                 <button
                   type="button"
                   className="btn-outline"
@@ -1756,14 +2521,8 @@ function App() {
 
       {/* Modal clôture */}
       {closureClient && (
-        <div
-          className="admin-modal-backdrop"
-          onClick={() => setClosureClient(null)}
-        >
-          <div
-            className="admin-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="admin-modal-backdrop" onClick={() => setClosureClient(null)}>
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
             <h2>Clôturer le client</h2>
             <p>
               {closureClient.first_name} {closureClient.last_name}
@@ -1785,19 +2544,8 @@ function App() {
                 ))}
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  gap: 8,
-                  marginTop: 12,
-                }}
-              >
-                <button
-                  type="button"
-                  className="btn-outline"
-                  onClick={() => setClosureClient(null)}
-                >
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button type="button" className="btn-outline" onClick={() => setClosureClient(null)}>
                   Annuler
                 </button>
                 <button type="submit" className="btn-primary">
@@ -1860,6 +2608,7 @@ const baseCss = `
     font-size: 0.9rem;
   }
   .user-info { white-space: nowrap; }
+
   .btn-primary,
   .btn-secondary,
   .btn-outline,
@@ -1891,6 +2640,7 @@ const baseCss = `
     cursor: pointer;
   }
   .btn-outline-small:hover { background: #f3f4f6; }
+
   .main {
     padding: 24px 32px 40px;
     max-width: 1200px;
@@ -1945,11 +2695,34 @@ const baseCss = `
     background: #ffffff;
     font-size: 0.9rem;
   }
+
+  .view-toggle { display: flex; gap: 8px; align-items: center; }
+  .view-button {
+    border-radius: 999px;
+    padding: 6px 14px;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .view-button-active {
+    background: #111827;
+    color: #ffffff;
+    border-color: #111827;
+  }
+
   .section-title {
-    margin: 8px 0 16px;
+    margin: 14px 0 10px;
     font-size: 1rem;
     font-weight: 600;
   }
+.dash-page-title{
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #111827;
+}
+
   .clients-list {
     display: flex;
     flex-direction: column;
@@ -1962,6 +2735,8 @@ const baseCss = `
     border: 1px solid #e5e7eb;
     box-shadow: 0 1px 2px rgba(0,0,0,0.03);
   }
+  .detail-card-inside { margin-top: 10px; }
+
   .client-header {
     display: flex;
     justify-content: space-between;
@@ -1981,17 +2756,6 @@ const baseCss = `
   .client-line {
     font-size: 0.85rem;
     color: #374151;
-  }
-  .badge-status {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 10px;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    background: #ecfdf5;
-    color: #166534;
-    border: 1px solid #bbf7d0;
   }
   .client-body {
     font-size: 0.85rem;
@@ -2016,6 +2780,75 @@ const baseCss = `
     justify-content: flex-end;
     gap: 8px;
   }
+
+  .compact-list { display: flex; flex-direction: column; gap: 10px; }
+  .compact-row {
+    background: #ffffff;
+    border-radius: 16px;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    overflow: hidden;
+  }
+  .compact-row-expanded { border-color: #d1d5db; }
+  .compact-row-click {
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .compact-row-main { min-width: 0; flex: 1; }
+  .compact-row-line1 {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+    min-width: 0;
+  }
+  .compact-name { font-weight: 700; font-size: 1rem; }
+  .compact-owner { color: #6b7280; font-size: 0.85rem; white-space: nowrap; }
+  .compact-row-line2 {
+    color: #374151;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0.1px;
+  }
+  .compact-row-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 2px;
+    flex-shrink: 0;
+  }
+  .chev { color: #6b7280; font-size: 0.9rem; }
+
+  .compact-expanded {
+    padding: 0 12px 12px;
+  }
+
+  .nextdue-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .nextdue-label { font-size: 0.85rem; color: #111827; font-weight: 600; }
+  .nextdue-input {
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    font-size: 0.9rem;
+  }
+
   .app-footer {
     margin-top: 24px;
     font-size: 0.8rem;
@@ -2027,6 +2860,7 @@ const baseCss = `
     font-size: 0.85rem;
     margin-bottom: 8px;
   }
+
   .auth-screen {
     display: flex;
     align-items: center;
@@ -2041,16 +2875,13 @@ const baseCss = `
     max-width: 360px;
     width: 100%;
   }
-  .auth-card h1 {
-    margin: 0 0 4px;
-    font-size: 1.4rem;
-  }
+  .auth-card h1 { margin: 0 0 4px; font-size: 1.4rem; }
   .auth-card .badge { margin-bottom: 16px; }
   .auth-form {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    margin: 12px 0 8px;
+    gap: 8px;
+    margin: 10px 0 6px;
   }
   .auth-form label {
     display: flex;
@@ -2061,7 +2892,7 @@ const baseCss = `
   .auth-form input,
   .auth-form textarea,
   .auth-form select {
-    padding: 8px 10px;
+    padding: 7px 10px;
     border-radius: 10px;
     border: 1px solid #d1d5db;
     font-size: 0.9rem;
@@ -2081,6 +2912,7 @@ const baseCss = `
     color: #6b7280;
     text-align: center;
   }
+
   .admin-modal-backdrop {
     position: fixed;
     inset: 0;
@@ -2092,33 +2924,92 @@ const baseCss = `
   }
   .admin-modal {
     background: #ffffff;
-    padding: 20px 24px;
+    padding: 16px 20px;
     border-radius: 16px;
-    max-width: 620px;
+    max-width: 920px;
     width: 100%;
     box-shadow: 0 10px 30px rgba(0,0,0,0.18);
   }
-  .admin-modal h2 {
-    margin-top: 0;
-    margin-bottom: 8px;
+  .admin-modal h2 { margin-top: 0; margin-bottom: 8px; }
+  .admin-modal h3 { margin-top: 16px; margin-bottom: 6px; font-size: 0.95rem; }
+  .admin-modal ul { padding-left: 18px; margin-top: 0; font-size: 0.85rem; }
+
+  /* Dashboard */
+  .dash-top{
+    display:grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
   }
-  .admin-modal h3 {
-    margin-top: 16px;
-    margin-bottom: 6px;
-    font-size: 0.95rem;
+  .dash-kpis{
+    display:grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
   }
-  .admin-modal ul {
-    padding-left: 18px;
-    margin-top: 0;
-    font-size: 0.85rem;
+  .kpi{
+    background:#fff;
+    border:1px solid #e5e7eb;
+    border-radius:16px;
+    padding:12px 14px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
   }
+  .kpi-label{ font-size:0.8rem; color:#6b7280; margin-bottom:6px; }
+  .kpi-value{ font-size:1.3rem; font-weight:700; color:#111827; }
+
+  .dash-score{
+    background:#fff;
+    border:1px solid #e5e7eb;
+    border-radius:16px;
+    padding:12px 14px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .dash-score-title{ font-size:0.85rem; color:#6b7280; margin-bottom:6px; }
+  .dash-score-value{ font-size:1.6rem; font-weight:800; }
+  .dash-score-sub{ font-size:0.85rem; color:#374151; margin-top:6px; }
+  .dash-score-tips{ margin-top:10px; font-size:0.85rem; color:#374151; }
+
+  .dash-grid{
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .dash-card-head{
+  margin-bottom: 8px;
+}
+
+.dash-card-actions{
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+  .dash-card{
+    background:#fff;
+    border:1px solid #e5e7eb;
+    border-radius:16px;
+    padding:14px 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .dash-title{
+    font-weight:700;
+    margin-bottom:10px;
+  }
+  .dash-empty{ color:#6b7280; font-size:0.9rem; }
+  .dash-list{ list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
+  .dash-item-name{ font-weight:700; font-size:0.95rem; }
+  .dash-item-sub{ color:#6b7280; font-size:0.85rem; }
+
+  @media (max-width: 1000px) {
+    .dash-top{ grid-template-columns: 1fr; }
+    .dash-kpis{ grid-template-columns: repeat(2, 1fr); }
+    .dash-grid{ grid-template-columns: 1fr; }
+  }
+
   @media (max-width: 768px) {
-    .app-header {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 8px;
-    }
+    .app-header { flex-direction: column; align-items: flex-start; gap: 8px; }
     .main { padding: 16px; }
+    .compact-row-line2 { white-space: normal; }
   }
 `;
 
