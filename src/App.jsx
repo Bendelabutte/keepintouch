@@ -3159,7 +3159,7 @@ const handleCloseReleaseNotesTemporary = () => {
               renderClientsBlock(afters, makeSectionTitle(afterTitle, afters.length), "after")
             )}
 
-            <footer className="app-footer">© Benjamin Rondreux — Keepintouch 2.4 — 2026</footer>
+            <footer className="app-footer">© Benjamin Rondreux — Keepintouch 3.1 — 2026</footer>
           </>
         )}
       </main>
