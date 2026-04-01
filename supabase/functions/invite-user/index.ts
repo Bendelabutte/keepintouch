@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
     // Envoie l'invitation Supabase Auth
     const { data: inviteData, error: inviteError } =
       await adminClient.auth.admin.inviteUserByEmail(email, {
-        redirectTo: "http://localhost:5173/?invite=1",
+        redirectTo: "https://www.osmozdev.com/?invite=1",
         data: { role },
       });
 

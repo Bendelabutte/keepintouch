@@ -11,6 +11,7 @@ import AdminModal from "./components/AdminModal";
 import ClientModal from "./components/ClientModal";
 import ClosureModal from "./components/ClosureModal";
 import ProfileModal from "./components/ProfileModal";
+import ReleaseNotesModal from "./components/ReleaseNotesModal";
 
 function App() {
   // Auth / session
@@ -84,7 +85,8 @@ function App() {
     }
   });
   const [expandedClientId, setExpandedClientId] = useState(null);
-
+const RELEASE_NOTES_VERSION = "v3";
+const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   // Rôles
   const [userRole, setUserRole] = useState("user");
   const [isAdmin, setIsAdmin] = useState(false);
@@ -186,6 +188,18 @@ function App() {
       localStorage.setItem("kit_view_mode", viewMode);
     } catch (e) {}
   }, [viewMode]);
+
+useEffect(() => {
+  if (!session?.user?.id) return;
+
+  try {
+    const key = `kit_release_notes_seen_${RELEASE_NOTES_VERSION}`;
+    const alreadySeen = localStorage.getItem(key) === "true";
+    setShowReleaseNotes(!alreadySeen);
+  } catch (e) {
+    setShowReleaseNotes(true);
+  }
+}, [session]);
 
   // ---------- UTIL BASE ----------
 
@@ -2281,6 +2295,18 @@ function App() {
     return Math.max(...comparisonRows.map((r) => r.caTtc), 0);
   }, [comparisonRows]);
 
+const handleCloseReleaseNotesPermanently = () => {
+  try {
+    const key = `kit_release_notes_seen_${RELEASE_NOTES_VERSION}`;
+    localStorage.setItem(key, "true");
+  } catch (e) {}
+  setShowReleaseNotes(false);
+};
+
+const handleCloseReleaseNotesTemporary = () => {
+  setShowReleaseNotes(false);
+};
+
   // ---------- RENDU ----------
 
   if (sessionLoading) {
@@ -3137,6 +3163,12 @@ function App() {
           </>
         )}
       </main>
+
+<ReleaseNotesModal
+  show={showReleaseNotes}
+  onClosePermanently={handleCloseReleaseNotesPermanently}
+  onCloseTemporary={handleCloseReleaseNotesTemporary}
+/>
 
       <AdminModal
         isAdmin={isAdmin}
