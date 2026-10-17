@@ -781,36 +781,37 @@ useEffect(() => {
   };
 
   const openEditModal = (client) => {
-    setEditingClientId(client.id);
-    setNewClient({
-      category: client.category || "seller",
-      seller_kind: client.seller_kind || "Vendeur",
-      deal_stage: client.deal_stage || "pre_mandat",
-      first_name: client.first_name || "",
-      last_name: client.last_name || "",
-      email: client.email || "",
-      phone: client.phone || "",
-      estimation_date: client.estimation_date || "",
-      created_at: client.created_at || "",
-      acquisition_date: client.acquisition_date || "",
-      property_address: client.property_address || "",
-      project_horizon: client.project_horizon || "Court terme",
-      consultant_feeling: client.consultant_feeling || "",
-      sale_reason: client.sale_reason || "",
-      contact_origin: client.contact_origin || "",
-      project_type: client.project_type || "",
-      area: client.area || "",
-      budget_max: client.budget_max || "",
-      bedrooms: client.bedrooms || "",
-      min_surface: client.min_surface || "",
-      also_owner: client.also_owner || false,
-      after_address: client.after_address || "",
-      client_birthday: client.client_birthday || "",
-      context: client.context || "",
-      manual_next_due_date: client.next_due_date || "",
-    });
-    setShowAddModal(true);
-  };
+  setEditingClientId(client.id);
+  setNewClient({
+    category: client.category || "seller",
+    seller_kind: client.seller_kind || "Vendeur",
+    deal_stage: client.deal_stage || "pre_mandat",
+    first_name: client.first_name || "",
+    last_name: client.last_name || "",
+    email: client.email || "",
+    phone: client.phone || "",
+    estimation_date: client.estimation_date || "",
+    created_at: client.created_at || "",
+    acquisition_date: client.acquisition_date || "",
+    property_address: client.property_address || "",
+    project_horizon: client.project_horizon || "Court terme",
+    consultant_feeling: client.consultant_feeling || "",
+    sale_reason: client.sale_reason || "",
+    contact_origin: client.contact_origin || "",
+    project_type: client.project_type || "",
+    area: client.area || "",
+    budget_max: client.budget_max || "",
+    bedrooms: client.bedrooms || "",
+    min_surface: client.min_surface || "",
+    also_owner: client.also_owner || false,
+    after_address: client.after_address || "",
+    client_birthday: client.client_birthday || "",
+    context: client.context || "",
+    manual_next_due_date:
+      client.next_due_date || client.next_followup_at || "",
+  });
+  setShowAddModal(true);
+};
 
   const handleNewClientChange = (field, value) => {
     setNewClient((prev) => ({
@@ -843,101 +844,133 @@ useEffect(() => {
   };
 
   const handleSaveClient = async (e) => {
-    e.preventDefault();
-    if (!session?.user?.id) {
-      alert("Impossible d’identifier le commercial connecté.");
-      return;
+  e.preventDefault();
+  if (!session?.user?.id) {
+    alert("Impossible d’identifier le commercial connecté.");
+    return;
+  }
+
+  if (!newClient.last_name.trim()) {
+    alert("Le nom du client est obligatoire.");
+    return;
+  }
+  if (!newClient.phone.trim()) {
+    alert("Le téléphone est obligatoire.");
+    return;
+  }
+  if (newClient.category === "seller" && !newClient.property_address.trim()) {
+    alert("L’adresse du bien est obligatoire pour un vendeur / bailleur.");
+    return;
+  }
+
+  try {
+    setIsLoading(true);
+    setLastError("");
+
+    const chosenNext = newClient.manual_next_due_date || computeInitialNextDue(newClient);
+
+    const payload = {
+      category: newClient.category || "seller",
+      first_name: newClient.first_name || null,
+      last_name: newClient.last_name || null,
+      email: newClient.email || null,
+      phone: newClient.phone || null,
+      estimation_date: newClient.category === "seller" ? newClient.estimation_date || null : null,
+      created_at:
+        newClient.category === "after"
+          ? newClient.created_at || null
+          : newClient.created_at || null,
+      acquisition_date: newClient.category === "buyer" ? newClient.acquisition_date || null : null,
+      property_address: newClient.category === "seller" ? newClient.property_address || null : null,
+      project_horizon: newClient.category === "after" ? null : newClient.project_horizon || null,
+      consultant_feeling: newClient.consultant_feeling || null,
+      contact_origin: newClient.contact_origin || null,
+      project_type: newClient.project_type || null,
+      area: newClient.category === "buyer" ? newClient.area || null : null,
+      budget_max: newClient.category === "buyer" ? newClient.budget_max || null : null,
+      bedrooms: newClient.category === "buyer" ? newClient.bedrooms || null : null,
+      min_surface: newClient.category === "buyer" ? newClient.min_surface || null : null,
+      also_owner: newClient.category === "buyer" ? !!newClient.also_owner : false,
+      after_address: newClient.category === "after" ? newClient.after_address || null : null,
+      client_birthday: newClient.category === "after" ? newClient.client_birthday || null : null,
+      context: newClient.category === "after" ? newClient.context || null : null,
+      next_due_date: chosenNext,
+            next_due_source: (() => {
+        if (!newClient.manual_next_due_date) return "auto";
+        const original = editingClientId
+          ? clientsRaw.find((c) => c.id === editingClientId)
+          : null;
+        const originalDate = original
+          ? original.next_due_date || original.next_followup_at || ""
+          : null;
+        if (original && newClient.manual_next_due_date === originalDate) {
+          return original.next_due_source || "auto";
+        }
+        return "manual";
+      })(),
+    };
+
+    if (newClient.category === "seller" && (newClient.seller_kind || "").trim()) {
+      payload.seller_kind = newClient.seller_kind.trim();
+    } else {
+      payload.seller_kind = null;
     }
 
-    if (!newClient.last_name.trim()) {
-      alert("Le nom du client est obligatoire.");
-      return;
-    }
-    if (!newClient.phone.trim()) {
-      alert("Le téléphone est obligatoire.");
-      return;
-    }
-    if (newClient.category === "seller" && !newClient.property_address.trim()) {
-      alert("L’adresse du bien est obligatoire pour un vendeur / bailleur.");
-      return;
+    if (newClient.category === "seller" && (newClient.sale_reason || "").trim()) {
+      payload.sale_reason = newClient.sale_reason.trim();
+    } else {
+      payload.sale_reason = null;
     }
 
-    try {
-      setIsLoading(true);
-      setLastError("");
+    if (newClient.category === "seller") {
+      payload.deal_stage = (newClient.deal_stage || "pre_mandat").trim();
+    } else {
+      payload.deal_stage = null;
+    }
 
-      const chosenNext = newClient.manual_next_due_date || computeInitialNextDue(newClient);
+    if (editingClientId) {
+      const currentClient = clientsRaw.find((c) => c.id === editingClientId);
 
-      const payload = {
-        category: newClient.category || "seller",
-        first_name: newClient.first_name || null,
-        last_name: newClient.last_name || null,
-        email: newClient.email || null,
-        phone: newClient.phone || null,
-        estimation_date: newClient.category === "seller" ? newClient.estimation_date || null : null,
-        created_at:
-          newClient.category === "after"
-            ? newClient.created_at || null
-            : newClient.created_at || null,
-        acquisition_date: newClient.category === "buyer" ? newClient.acquisition_date || null : null,
-        property_address: newClient.category === "seller" ? newClient.property_address || null : null,
-        project_horizon: newClient.category === "after" ? null : newClient.project_horizon || null,
-        consultant_feeling: newClient.consultant_feeling || null,
-        contact_origin: newClient.contact_origin || null,
-        project_type: newClient.project_type || null,
-        area: newClient.category === "buyer" ? newClient.area || null : null,
-        budget_max: newClient.category === "buyer" ? newClient.budget_max || null : null,
-        bedrooms: newClient.category === "buyer" ? newClient.bedrooms || null : null,
-        min_surface: newClient.category === "buyer" ? newClient.min_surface || null : null,
-        also_owner: newClient.category === "buyer" ? !!newClient.also_owner : false,
-        after_address: newClient.category === "after" ? newClient.after_address || null : null,
-        client_birthday: newClient.category === "after" ? newClient.client_birthday || null : null,
-        context: newClient.category === "after" ? newClient.context || null : null,
+      if (
+        newClient.category === "seller" &&
+        (newClient.deal_stage || "pre_mandat") === "mandat" &&
+        !currentClient?.mandat_at
+      ) {
+        payload.mandat_at = new Date().toISOString();
+      }
+
+      const { error } = await supabase
+        .from("clients")
+        .update(payload)
+        .eq("id", editingClientId);
+
+      if (error) throw error;
+    } else {
+      const insertPayload = {
+        ...payload,
+        owner_id: session.user.id,
+        status: "active",
+        mandat_at:
+          newClient.category === "seller" && newClient.deal_stage === "mandat"
+            ? new Date().toISOString()
+            : null,
       };
 
-      if (newClient.category === "seller" && (newClient.seller_kind || "").trim()) {
-        payload.seller_kind = newClient.seller_kind.trim();
-      }
-
-      if (newClient.category === "seller" && (newClient.sale_reason || "").trim()) {
-        payload.sale_reason = newClient.sale_reason.trim();
-      }
-
-      if (newClient.category === "seller") {
-        payload.deal_stage = (newClient.deal_stage || "pre_mandat").trim();
-      }
-
-      if (editingClientId) {
-        const { error } = await supabase.from("clients").update(payload).eq("id", editingClientId);
-        if (error) throw error;
-      } else {
-        const insertPayload = {
-          ...payload,
-          owner_id: session.user.id,
-          status: "active",
-          next_due_date: chosenNext,
-          next_due_source: newClient.manual_next_due_date ? "manual" : "auto",
-          mandat_at:
-            newClient.category === "seller" && newClient.deal_stage === "mandat"
-              ? new Date().toISOString()
-              : null,
-        };
-
-        const { error } = await supabase.from("clients").insert(insertPayload);
-        if (error) throw error;
-      }
-
-      setShowAddModal(false);
-      setEditingClientId(null);
-      await fetchClientsFromDb();
-    } catch (err) {
-      console.error("Erreur sauvegarde client", err);
-      setLastError(err.message || "Erreur création / modification client");
-      alert("Erreur lors de la sauvegarde du client : " + (err.message || "voir console (F12)"));
-    } finally {
-      setIsLoading(false);
+      const { error } = await supabase.from("clients").insert(insertPayload);
+      if (error) throw error;
     }
-  };
+
+    setShowAddModal(false);
+    setEditingClientId(null);
+    await fetchClientsFromDb();
+  } catch (err) {
+    console.error("Erreur sauvegarde client", err);
+    setLastError(err.message || "Erreur création / modification client");
+    alert("Erreur lors de la sauvegarde du client : " + (err.message || "voir console (F12)"));
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   // ---------- INVITATION UTILISATEUR ----------
 
