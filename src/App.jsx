@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { baseCss } from "./styles/baseCss";
+import { addDaysToDate, parseDateStr, todayStr as getTodayStr } from "./lib/dates";
 
 import Header from "./components/Header";
 import DashboardCard from "./components/DashboardCard";
@@ -239,12 +240,7 @@ useEffect(() => {
 
   const pluralize = (n, singular, plural) => (n > 1 ? plural : singular);
 
-  const addDays = (baseDate, days) => {
-    const d = baseDate ? new Date(baseDate) : new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + days);
-    return d.toISOString().slice(0, 10);
-  };
+  const addDays = (baseDate, days) => addDaysToDate(baseDate || new Date(), days);
 
   const getRelanceCfgForCategory = (category) => {
     const cat = category === "buyer" ? "buyer" : category === "after" ? "after" : "seller";
@@ -832,15 +828,12 @@ useEffect(() => {
     const initialDays = Number(cfg.initial_days) || 15;
 
     let base = null;
-    if (cl.category === "seller" && cl.estimation_date) base = new Date(cl.estimation_date);
+    if (cl.category === "seller" && cl.estimation_date) base = parseDateStr(cl.estimation_date);
     else if (cl.category === "buyer" && query_date(cl.acquisition_date))
-      base = new Date(cl.acquisition_date);
-    else if (cl.category === "after" && cl.created_at) base = new Date(cl.created_at);
+      base = parseDateStr(cl.acquisition_date);
+    else if (cl.category === "after" && cl.created_at) base = parseDateStr(cl.created_at);
 
-    if (!base) base = new Date();
-    base.setHours(0, 0, 0, 0);
-    base.setDate(base.getDate() + initialDays);
-    return base.toISOString().slice(0, 10);
+    return addDaysToDate(base || new Date(), initialDays);
   };
 
   const handleSaveClient = async (e) => {
@@ -1111,7 +1104,7 @@ useEffect(() => {
   // ---------- CLOTURE ----------
 
   const openClosureModal = (client) => {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = getTodayStr();
 
     setClosureClient(client);
     setClosureReason("projet_abandonne");
@@ -1195,7 +1188,7 @@ useEffect(() => {
         }
 
         const saleDate = afterSaleForm.sale_date;
-        const nextAfterDue = addDays(new Date(saleDate), 90);
+        const nextAfterDue = addDays(saleDate, 90);
 
         const updatePayload = {
           category: "after",
@@ -1295,7 +1288,7 @@ useEffect(() => {
         updatePayload.sale_result = reason;
 
         if (reason === "vendu_autre_agence" || reason === "vendu_seul") {
-          updatePayload.sale_completed_at = nowIso.slice(0, 10);
+          updatePayload.sale_completed_at = getTodayStr();
         }
       }
 
