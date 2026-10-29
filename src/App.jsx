@@ -3,6 +3,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { baseCss } from "./styles/baseCss";
 import { addDaysToDate, parseDateStr, todayStr as getTodayStr } from "./lib/dates";
+import { computeStats } from "./lib/stats";
+import {
+  RELANCE_DEFAULTS,
+  resolveRelanceCfg,
+  settingsRowToRelanceConfig,
+  relanceConfigToSettingsRow,
+} from "./lib/relance";
+import { fetchAllRows } from "./lib/fetchAll";
 
 import Header from "./components/Header";
 import DashboardCard from "./components/DashboardCard";
@@ -160,12 +168,8 @@ const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [inviteRole, setInviteRole] = useState("user");
 
   // Délais
-  const DEFAULT_RELANCE_CONFIG = {
-    seller: { initial_days: 15, default_next_days: 21 },
-    buyer: { initial_days: 14, default_next_days: 21 },
-    after: { initial_days: 45, default_next_days: 90 },
-  };
-  const [relanceConfig, setRelanceConfig] = useState(DEFAULT_RELANCE_CONFIG);
+  const [relanceConfig, setRelanceConfig] = useState(RELANCE_DEFAULTS);
+  const [settingsError, setSettingsError] = useState("");
 
   const DEFAULT_EMAIL_NOTIFICATION_CONFIG = {
     tomorrow_enabled: true,
@@ -242,10 +246,7 @@ useEffect(() => {
 
   const addDays = (baseDate, days) => addDaysToDate(baseDate || new Date(), days);
 
-  const getRelanceCfgForCategory = (category) => {
-    const cat = category === "buyer" ? "buyer" : category === "after" ? "after" : "seller";
-    return relanceConfig?.[cat] || DEFAULT_RELANCE_CONFIG[cat];
-  };
+  const getRelanceCfgForCategory = (category) => resolveRelanceCfg(relanceConfig, category);
 
   const getSellerStageLabel = (c) => {
     const v = (c?.deal_stage || "").toLowerCase();
@@ -310,36 +311,7 @@ useEffect(() => {
   // ---------- RELANCE CONFIG LOAD/SAVE ----------
 
   const loadRelanceConfig = async () => {
-    try {
-      const raw = localStorage.getItem("kit_relance_config_v1");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") {
-          setRelanceConfig((prev) => ({ ...prev, ...parsed }));
-        }
-      }
-    } catch (e) {}
-
-    try {
-      const { data, error } = await supabase
-        .from("app_settings")
-        .select(
-          "email_tomorrow_enabled, email_late_enabled, email_late_days, email_global_enabled, email_global_threshold, email_global_frequency_days"
-        )
-        .limit(1)
-        .maybeSingle();
-
-      if (!error && data) {
-        setEmailNotificationConfig({
-          tomorrow_enabled: data.email_tomorrow_enabled ?? true,
-          late_enabled: data.email_late_enabled ?? true,
-          late_days: Number(data.email_late_days ?? 3),
-          global_enabled: data.email_global_enabled ?? true,
-          global_threshold: Number(data.email_global_threshold ?? 3),
-          global_frequency_days: Number(data.email_global_frequency_days ?? 1),
-        });
-      }
-    } catch (e) {}
+    setSettingsError("");
 
     try {
       const { data, error } = await supabase
@@ -348,37 +320,31 @@ useEffect(() => {
         .limit(1)
         .maybeSingle();
 
-      if (!error && data) {
-        const mapped = {
-          seller: {
-            initial_days: Number(data.seller_first_days || 15),
-            default_next_days: Number(data.seller_repeat_days || 21),
-          },
-          buyer: {
-            initial_days: Number(data.buyer_first_days || 14),
-            default_next_days: Number(data.buyer_repeat_days || 21),
-          },
-          after: {
-            initial_days: Number(data.after_first_days || 45),
-            default_next_days: Number(data.after_repeat1_days || 90),
-          },
-        };
+      if (error) throw error;
+      if (!data) throw new Error("aucune ligne app_settings trouvée");
 
-        setRelanceConfig(mapped);
+      setEmailNotificationConfig({
+        tomorrow_enabled: data.email_tomorrow_enabled ?? true,
+        late_enabled: data.email_late_enabled ?? true,
+        late_days: Number(data.email_late_days ?? 3),
+        global_enabled: data.email_global_enabled ?? true,
+        global_threshold: Number(data.email_global_threshold ?? 3),
+        global_frequency_days: Number(data.email_global_frequency_days ?? 1),
+      });
 
-        try {
-          localStorage.setItem("kit_relance_config_v1", JSON.stringify(mapped));
-        } catch (e) {}
-      }
-    } catch (e) {}
+      setRelanceConfig(settingsRowToRelanceConfig(data));
+    } catch (err) {
+      console.error("loadRelanceConfig", err);
+      setSettingsError(
+        "Impossible de charger les paramètres de relance (" +
+          (err.message || "erreur inconnue") +
+          "). Les délais par défaut sont utilisés."
+      );
+    }
   };
 
   const persistRelanceConfig = async (nextCfg) => {
   setRelanceConfig(nextCfg);
-
-  try {
-    localStorage.setItem("kit_relance_config_v1", JSON.stringify(nextCfg));
-  } catch (e) {}
 
   try {
     const { data, error } = await supabase
@@ -390,14 +356,7 @@ useEffect(() => {
     if (error) throw error;
     if (!data) return;
 
-    const payload = {
-      seller_first_days: Number(nextCfg.seller.initial_days || 15),
-      seller_repeat_days: Number(nextCfg.seller.default_next_days || 21),
-      buyer_first_days: Number(nextCfg.buyer.initial_days || 14),
-      buyer_repeat_days: Number(nextCfg.buyer.default_next_days || 21),
-      after_first_days: Number(nextCfg.after.initial_days || 45),
-      after_repeat1_days: Number(nextCfg.after.default_next_days || 90),
-    };
+    const payload = relanceConfigToSettingsRow(nextCfg);
 
     const { error: updateError } = await supabase
       .from("app_settings")
@@ -523,7 +482,9 @@ useEffect(() => {
     setLastError("");
 
     try {
-      const { data, error } = await supabase.from("clients").select("*");
+      const { data, error } = await fetchAllRows(() =>
+        supabase.from("clients").select("*").order("id", { ascending: true })
+      );
       if (error) throw error;
       setClientsRaw(data || []);
     } catch (err) {
@@ -539,10 +500,13 @@ useEffect(() => {
     if (!session?.user) return;
 
     try {
-      const { data, error } = await supabase
-        .from("client_comments")
-        .select("id, client_id, body, created_at")
-        .order("created_at", { ascending: false });
+      const { data, error } = await fetchAllRows(() =>
+        supabase
+          .from("client_comments")
+          .select("id, client_id, body, created_at")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+      );
 
       if (error) {
         console.warn("Erreur chargement client_comments :", error.message);
@@ -601,7 +565,7 @@ useEffect(() => {
       const d = new Date(client.estimation_date);
       if (!Number.isNaN(d.getTime())) {
         d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + (Number(cfg.initial_days) || 15));
+        d.setDate(d.getDate() + Number(cfg.initial_days));
         return d;
       }
     }
@@ -610,7 +574,7 @@ useEffect(() => {
       const d = new Date(client.acquisition_date);
       if (!Number.isNaN(d.getTime())) {
         d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + (Number(cfg.initial_days) || 15));
+        d.setDate(d.getDate() + Number(cfg.initial_days));
         return d;
       }
     }
@@ -619,7 +583,7 @@ useEffect(() => {
       const d = new Date(client.created_at);
       if (!Number.isNaN(d.getTime())) {
         d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + (Number(cfg.initial_days) || 15));
+        d.setDate(d.getDate() + Number(cfg.initial_days));
         return d;
       }
     }
@@ -825,7 +789,7 @@ useEffect(() => {
 
   const computeInitialNextDue = (cl) => {
     const cfg = getRelanceCfgForCategory(cl.category);
-    const initialDays = Number(cfg.initial_days) || 15;
+    const initialDays = Number(cfg.initial_days);
 
     let base = null;
     if (cl.category === "seller" && cl.estimation_date) base = parseDateStr(cl.estimation_date);
@@ -1069,7 +1033,7 @@ useEffect(() => {
 
       const chosen = nextDueInputs[client.id];
       const cfg = getRelanceCfgForCategory(client.category);
-      const defaultNext = Number(cfg.default_next_days) || 14;
+      const defaultNext = Number(cfg.default_next_days);
 
       const nextStr =
         chosen && /^\d{4}-\d{2}-\d{2}$/.test(chosen) ? chosen : addDays(new Date(), defaultNext);
@@ -1188,7 +1152,7 @@ useEffect(() => {
         }
 
         const saleDate = afterSaleForm.sale_date;
-        const nextAfterDue = addDays(saleDate, 90);
+        const nextAfterDue = addDays(saleDate, getRelanceCfgForCategory("after").initial_days);
 
         const updatePayload = {
           category: "after",
@@ -1258,20 +1222,6 @@ useEffect(() => {
         return;
       }
 
-      const commentBody = `Client clôturé : ${reason}`;
-
-      const { error: commentErr } = await supabase.from("client_comments").insert({
-        client_id: client.id,
-        body: commentBody,
-        author_id: session.user.id,
-      });
-
-      if (commentErr) {
-        console.warn("Erreur insertion closure comment :", commentErr.message);
-      } else {
-        await fetchCommentsFromDb();
-      }
-
       const nowIso = new Date().toISOString();
       const updatePayload = {
         status: "closed",
@@ -1292,16 +1242,33 @@ useEffect(() => {
         }
       }
 
-      const { error: updErr } = await supabase
+      const { data: updatedRows, error: updErr } = await supabase
         .from("clients")
         .update(updatePayload)
-        .eq("id", client.id);
+        .eq("id", client.id)
+        .select("id");
 
-      if (updErr) {
-        console.warn("Erreur update status closed :", updErr.message);
+      if (updErr || !updatedRows || updatedRows.length === 0) {
+        const msg = updErr?.message || "aucune ligne modifiée (droits insuffisants ?)";
+        console.error("Erreur update status closed :", msg);
+        alert("Erreur lors de la clôture du client : " + msg);
+        return;
+      }
+
+      const commentBody = `Client clôturé : ${reason}`;
+
+      const { error: commentErr } = await supabase.from("client_comments").insert({
+        client_id: client.id,
+        body: commentBody,
+        author_id: session.user.id,
+      });
+
+      if (commentErr) {
+        console.warn("Erreur insertion closure comment :", commentErr.message);
       }
 
       setClosureClient(null);
+      await fetchCommentsFromDb();
       await fetchClientsFromDb();
     } catch (err) {
       console.error("Erreur clôture client", err);
@@ -1695,12 +1662,7 @@ useEffect(() => {
     if (!data) throw new Error("Aucune ligne app_settings trouvée.");
 
     const relancePayload = {
-      seller_first_days: Number(relanceConfig?.seller?.initial_days ?? 15),
-      seller_repeat_days: Number(relanceConfig?.seller?.default_next_days ?? 14),
-      buyer_first_days: Number(relanceConfig?.buyer?.initial_days ?? 15),
-      buyer_repeat_days: Number(relanceConfig?.buyer?.default_next_days ?? 14),
-      after_first_days: Number(relanceConfig?.after?.initial_days ?? 15),
-      after_repeat1_days: Number(relanceConfig?.after?.default_next_days ?? 14),
+      ...relanceConfigToSettingsRow(relanceConfig),
       updated_at: new Date().toISOString(),
     };
 
@@ -2121,104 +2083,13 @@ useEffect(() => {
     return { score: score.toFixed(1), reasons, tips };
   }, [dashboardClientsRaw, relanceConfig, today0]);
 
-  const estimationMandatStats = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const matureLimit = new Date(today);
-    matureLimit.setDate(matureLimit.getDate() - 90);
-
-    const oldLimit = new Date(today);
-    oldLimit.setMonth(oldLimit.getMonth() - 12);
-
-    const base = dashboardClientsRaw.filter((c) => {
-      if (!c.estimation_date) return false;
-      const d = new Date(c.estimation_date);
-      if (Number.isNaN(d.getTime())) return false;
-      return d >= oldLimit && d <= matureLimit;
-    });
-
-    const converted = base.filter((c) => {
-      return Boolean(c.mandat_at) || c.deal_stage === "mandat";
-    });
-
-    const estimations = base.length;
-    const mandats = converted.length;
-    const conversionPct =
-      estimations === 0 ? 0 : Math.round((mandats / estimations) * 1000) / 10;
-
-    return {
-      estimations,
-      mandats,
-      conversionPct,
-    };
-  }, [dashboardClientsRaw]);
-
-  const mandatVenteStats = useMemo(() => {
-    const mandats = dashboardClientsRaw.filter(
-      (c) => Boolean(c.mandat_at) || c.deal_stage === "mandat"
-    );
-
-    const ventesParNous = mandats.filter((c) => c.sale_result === "vendu_avec_nous");
-
-    const mandatsCount = mandats.length;
-    const ventesCount = ventesParNous.length;
-    const conversionPct =
-      mandatsCount === 0 ? 0 : Math.round((ventesCount / mandatsCount) * 1000) / 10;
-
-    return {
-      mandats: mandatsCount,
-      ventes: ventesCount,
-      conversionPct,
-    };
-  }, [dashboardClientsRaw]);
-
-  const commercialRevenueStats = useMemo(() => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const start = new Date(year, 0, 1);
-    const end = new Date(year + 1, 0, 1);
-
-    const encaissedThisYear = dashboardClientsRaw.filter((c) => {
-      if (!c.commission_received_at) return false;
-      const d = new Date(c.commission_received_at);
-      if (Number.isNaN(d.getTime())) return false;
-      return d >= start && d < end;
-    });
-
-    const totalTtc = encaissedThisYear.reduce(
-      (sum, c) => sum + Number(c.commission_ttc || 0),
-      0
-    );
-
-    const totalHt = encaissedThisYear.reduce(
-      (sum, c) => sum + Number(c.commission_ht || 0),
-      0
-    );
-
-    return {
-      year,
-      totalTtc,
-      totalHt,
-      count: encaissedThisYear.length,
-    };
-  }, [dashboardClientsRaw]);
+  const dashboardStats = useMemo(
+    () => computeStats(dashboardClientsRaw, today0),
+    [dashboardClientsRaw, today0]
+  );
 
   const comparisonRows = useMemo(() => {
     if (!(isAdmin || isManager)) return [];
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const matureLimit = new Date(today);
-    matureLimit.setDate(matureLimit.getDate() - 90);
-
-    const oldLimit = new Date(today);
-    oldLimit.setMonth(oldLimit.getMonth() - 12);
-
-    const year = today.getFullYear();
-    const yearStart = new Date(year, 0, 1);
-    const yearEnd = new Date(year + 1, 0, 1);
 
     return dashboardFilterOptions
       .map((profile) => {
@@ -2228,19 +2099,7 @@ useEffect(() => {
         );
 
         const active = ownerClients.filter((c) => c.status !== "closed");
-
-        const estimationsBase = ownerClients.filter((c) => {
-          if (!c.estimation_date) return false;
-          const d = new Date(c.estimation_date);
-          if (Number.isNaN(d.getTime())) return false;
-          return d >= oldLimit && d <= matureLimit;
-        });
-
-        const mandats = ownerClients.filter(
-          (c) => Boolean(c.mandat_at) || c.deal_stage === "mandat"
-        );
-
-        const ventes = mandats.filter((c) => c.sale_result === "vendu_avec_nous");
+        const stats = computeStats(ownerClients, today0);
 
         const dueNow = active.filter((c) => {
           const nd = getNextDueDate(c);
@@ -2259,51 +2118,24 @@ useEffect(() => {
           return diffDays <= -2;
         });
 
-        const encaissedThisYear = ownerClients.filter((c) => {
-          if (!c.commission_received_at) return false;
-          const d = new Date(c.commission_received_at);
-          if (Number.isNaN(d.getTime())) return false;
-          return d >= yearStart && d < yearEnd;
-        });
-
-        const caTtc = encaissedThisYear.reduce(
-          (sum, c) => sum + Number(c.commission_ttc || 0),
-          0
-        );
-
-        const caHt = encaissedThisYear.reduce(
-          (sum, c) => sum + Number(c.commission_ht || 0),
-          0
-        );
-
-        const txEstimationMandat =
-          estimationsBase.length === 0
-            ? 0
-            : Math.round((mandats.length / estimationsBase.length) * 1000) / 10;
-
-        const txMandatVente =
-          mandats.length === 0
-            ? 0
-            : Math.round((ventes.length / mandats.length) * 1000) / 10;
-
         return {
           id: profile.id,
           email,
           label: getProfileLabel(profile),
           activeCount: active.length,
-          estimations: estimationsBase.length,
-          mandats: mandats.length,
-          ventes: ventes.length,
-          txEstimationMandat,
-          txMandatVente,
-          caTtc,
-          caHt,
+          estimations: stats.estimations,
+          mandatsFromEstimations: stats.mandatsFromEstimations,
+          mandats: stats.mandats,
+          ventes: stats.ventes,
+          txEstimationMandat: stats.txEstimationMandat,
+          txMandatVente: stats.txMandatVente,
+          caHt: stats.caHt,
           dueCount: dueNow.length,
           late2Count: late2.length,
         };
       })
       .sort((a, b) => {
-        if (b.caTtc !== a.caTtc) return b.caTtc - a.caTtc;
+        if (b.caHt !== a.caHt) return b.caHt - a.caHt;
         if (b.ventes !== a.ventes) return b.ventes - a.ventes;
         if (b.mandats !== a.mandats) return b.mandats - a.mandats;
         return a.label.localeCompare(b.label, "fr", { sensitivity: "base" });
@@ -2318,7 +2150,7 @@ useEffect(() => {
 
   const comparisonMaxCa = useMemo(() => {
     if (!comparisonRows.length) return 0;
-    return Math.max(...comparisonRows.map((r) => r.caTtc), 0);
+    return Math.max(...comparisonRows.map((r) => r.caHt), 0);
   }, [comparisonRows]);
 
 const handleCloseReleaseNotesPermanently = () => {
@@ -2567,6 +2399,7 @@ const handleCloseReleaseNotesTemporary = () => {
       />
 
       <main className="main">
+        {settingsError && <p className="error-text">{settingsError}</p>}
         {page === "dashboard" ? (
           <>
             <div
@@ -2727,11 +2560,11 @@ const handleCloseReleaseNotesTemporary = () => {
               <div className="conversion-card">
                 <div className="conversion-card-title">Conversion estimation → mandat</div>
                 <div className="conversion-card-value">
-                  {estimationMandatStats.conversionPct}%
+                  {dashboardStats.txEstimationMandat}%
                 </div>
                 <div className="conversion-card-meta">
-                  {estimationMandatStats.mandats} mandat(s) sur{" "}
-                  {estimationMandatStats.estimations} estimation(s) matures
+                  {dashboardStats.mandatsFromEstimations} mandat(s) sur{" "}
+                  {dashboardStats.estimations} estimation(s) matures
                 </div>
                 <div className="conversion-card-sub">
                   Base : estimations datées des 12 derniers mois, hors 90 derniers jours.
@@ -2740,9 +2573,9 @@ const handleCloseReleaseNotesTemporary = () => {
 
               <div className="conversion-card">
                 <div className="conversion-card-title">Conversion mandat → vente par moi</div>
-                <div className="conversion-card-value">{mandatVenteStats.conversionPct}%</div>
+                <div className="conversion-card-value">{dashboardStats.txMandatVente}%</div>
                 <div className="conversion-card-meta">
-                  {mandatVenteStats.ventes} vente(s) sur {mandatVenteStats.mandats} mandat(s)
+                  {dashboardStats.ventes} vente(s) sur {dashboardStats.mandats} mandat(s)
                 </div>
                 <div className="conversion-card-sub">
                   Base : tous les dossiers passés sous mandat, y compris ceux déjà basculés en
@@ -2752,26 +2585,26 @@ const handleCloseReleaseNotesTemporary = () => {
 
               <div className="conversion-card">
                 <div className="conversion-card-title">
-                  CA TTC {commercialRevenueStats.year}
+                  CA TTC {dashboardStats.year}
                 </div>
                 <div className="conversion-card-value">
-                  {formatCurrency(commercialRevenueStats.totalTtc)}
+                  {formatCurrency(dashboardStats.caTtc)}
                 </div>
                 <div className="conversion-card-meta">
-                  {commercialRevenueStats.count} vente(s) encaissée(s)
+                  {dashboardStats.encaissedCount} vente(s) encaissée(s)
                 </div>
                 <div className="conversion-card-sub">
                   Base : commissions dont la date d’encaissement est en{" "}
-                  {commercialRevenueStats.year}.
+                  {dashboardStats.year}.
                 </div>
               </div>
 
               <div className="conversion-card">
                 <div className="conversion-card-title">
-                  CA HT {commercialRevenueStats.year}
+                  CA HT {dashboardStats.year}
                 </div>
                 <div className="conversion-card-value">
-                  {formatCurrency(commercialRevenueStats.totalHt)}
+                  {formatCurrency(dashboardStats.caHt)}
                 </div>
                 <div className="conversion-card-meta">
                   Calculé automatiquement depuis le TTC et la TVA
@@ -2876,7 +2709,10 @@ const handleCloseReleaseNotesTemporary = () => {
   <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
     {row.ventes}
   </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
+  <td
+    style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}
+    title={`${row.mandatsFromEstimations} mandat(s) sur ${row.estimations} estimation(s) matures`}
+  >
     {formatPercent(row.txEstimationMandat)}
   </td>
   <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
@@ -2928,7 +2764,7 @@ const handleCloseReleaseNotesTemporary = () => {
                       marginBottom: 14,
                     }}
                   >
-                    CA TTC par commercial ({commercialRevenueStats.year})
+                    CA HT par commercial ({dashboardStats.year})
                   </div>
 
                   {comparisonRows.length === 0 ? (
@@ -2942,7 +2778,7 @@ const handleCloseReleaseNotesTemporary = () => {
                     >
                       {comparisonRows.map((row) => {
                         const ratio =
-                          comparisonMaxCa > 0 ? Math.max(4, (row.caTtc / comparisonMaxCa) * 100) : 0;
+                          comparisonMaxCa > 0 ? Math.max(4, (row.caHt / comparisonMaxCa) * 100) : 0;
 
                         return (
                           <div
@@ -2994,7 +2830,7 @@ const handleCloseReleaseNotesTemporary = () => {
                                 whiteSpace: "nowrap",
                               }}
                             >
-                              {formatCurrency(row.caTtc)}
+                              {formatCurrency(row.caHt)}
                             </div>
                           </div>
                         );
