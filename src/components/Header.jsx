@@ -13,6 +13,7 @@ export default function Header({
   showProfileMenu,
   setShowProfileMenu,
   setShowProfileModal,
+  onShowReleaseNotes,
 }) {
   const menuRef = useRef(null);
 
@@ -47,15 +48,18 @@ export default function Header({
       </div>
 
       <div className="header-right">
-    
-
-        <button
-          className="btn-secondary"
-          onClick={() => setPage(page === "clients" ? "dashboard" : "clients")}
-          type="button"
-        >
-          {page === "clients" ? "Tableau de bord" : "Clients"}
-        </button>
+        {[
+          ["clients", "Clients"],
+          ["dashboard", "Tableau de bord"],
+          ["transactions", "Transactions"],
+          ["remuneration", "Rémunération"],
+        ]
+          .filter(([key]) => key !== page)
+          .map(([key, label]) => (
+            <button key={key} className="btn-secondary" onClick={() => setPage(key)} type="button">
+              {label}
+            </button>
+          ))}
 
         {isAdmin && (
           <button
@@ -93,6 +97,17 @@ export default function Header({
                 }}
               >
                 Mon profil
+              </button>
+
+              <button
+                type="button"
+                className="profile-dropdown-item"
+                onClick={() => {
+                  setShowProfileMenu(false);
+                  onShowReleaseNotes();
+                }}
+              >
+                Nouveautés
               </button>
 
               <button

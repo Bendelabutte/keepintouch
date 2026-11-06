@@ -1,6 +1,7 @@
 // src/components/CompactRow.jsx
 import React from "react";
 import DelayPill from "./DelayPill";
+import { phaseBadgeClass } from "../lib/relance";
 
 export default function CompactRow({
   client,
@@ -33,10 +34,7 @@ export default function CompactRow({
   const isExpanded = expandedClientId === client.id;
   const isSeller = client.category === "seller";
   const sellerStageLabel = isSeller ? getSellerStageLabel(client) : "";
-  const sellerStageClass =
-    sellerStageLabel === "Sous mandat"
-      ? "stage-badge stage-badge-mandat"
-      : "stage-badge stage-badge-premandat";
+  const sellerStageClass = phaseBadgeClass(client.deal_stage);
 
   const isMobile =
     typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
@@ -101,6 +99,9 @@ export default function CompactRow({
             <span className="compact-name">{name}</span>
 
             {isSeller && <span className={sellerStageClass}>{sellerStageLabel}</span>}
+            {client.category === "buyer" && client.deal_stage === "sous_promesse" && (
+              <span className={sellerStageClass}>Sous promesse</span>
+            )}
 
             {(isAdmin || isManager) && (
               <span className="compact-owner">— {commercialEmail || "—"}</span>

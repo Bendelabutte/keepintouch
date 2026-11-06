@@ -1,5 +1,6 @@
 // src/components/ClientModal.jsx
 import React from "react";
+import AddressAutocomplete from "./AddressAutocomplete";
 
 export default function ClientModal({
   showAddModal,
@@ -115,12 +116,17 @@ export default function ClientModal({
             {newClient.category === "seller" && (
               <label>
                 Phase
+                {/* « Sous promesse » et « Vendu » passent par les boutons de la fiche (transaction liée).
+                    Tout changement de phase recalcule la prochaine relance. */}
                 <select
                   value={newClient.deal_stage || "pre_mandat"}
+                  disabled={["sous_promesse", "vendu"].includes(newClient.deal_stage)}
                   onChange={(e) => handleNewClientChange("deal_stage", e.target.value)}
                 >
                   <option value="pre_mandat">Pré-mandat</option>
                   <option value="mandat">Sous mandat</option>
+                  {newClient.deal_stage === "sous_promesse" && <option value="sous_promesse">Sous promesse</option>}
+                  {newClient.deal_stage === "vendu" && <option value="vendu">Vendu</option>}
                 </select>
               </label>
             )}
@@ -170,16 +176,21 @@ export default function ClientModal({
             {newClient.category !== "buyer" && (
               <label className="client-form-span-2">
                 {newClient.category === "after" ? "Adresse (après-vente)" : "Adresse du bien *"}
-                <input
-                  type="text"
+                <AddressAutocomplete
                   value={newClient.category === "after" ? newClient.after_address : newClient.property_address}
-                  onChange={(e) => {
-                    if (newClient.category === "after") {
-                      handleNewClientChange("after_address", e.target.value);
-                    } else {
-                      handleNewClientChange("property_address", e.target.value);
-                    }
-                  }}
+                  onChange={(text) =>
+                    handleNewClientChange(
+                      newClient.category === "after" ? "after_address" : "property_address",
+                      text
+                    )
+                  }
+                  // Fiche client : un seul champ texte → libellé complet « numéro rue, code postal ville »
+                  onSelect={(a) =>
+                    handleNewClientChange(
+                      newClient.category === "after" ? "after_address" : "property_address",
+                      a.label
+                    )
+                  }
                 />
               </label>
             )}

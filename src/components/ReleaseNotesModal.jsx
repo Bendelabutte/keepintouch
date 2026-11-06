@@ -1,26 +1,61 @@
 // src/components/ReleaseNotesModal.jsx
 import React from "react";
 
-export default function ReleaseNotesModal({
-  show,
-  onClosePermanently,
-  onCloseTemporary,
-}) {
+// Nouveautés de la version en cours, à destination des commerciaux.
+const NOTES = [
+  {
+    title: "Nouvelle page Transactions",
+    text: "toutes vos ventes et locations au même endroit, avec votre part de chaque honoraire.",
+  },
+  {
+    title: "« Passer sous promesse »",
+    text: "sur une fiche vendeur, saisissez la date de promesse, le prix, les honoraires et l’acquéreur. La fiche reste active, avec une relance 30 jours après la promesse.",
+  },
+  {
+    title: "« Acte signé » en un clic",
+    text: "le jour de la vente chez le notaire, seule la date de l’acte est demandée : la fiche passe « Vendu » et la vente compte dans votre CA.",
+  },
+  {
+    title: "Fiche après-vente créée automatiquement",
+    text: "à la vente, l’acquéreur saisi à la promesse devient une fiche après-vente, avec sa première relance déjà planifiée.",
+  },
+  {
+    title: "Acquéreur déjà dans vos fiches",
+    text: "dès 2 lettres tapées dans le bloc acquéreur, les fiches existantes sont proposées. Choisissez-la : elle passe « Sous promesse », puis devient la fiche après-vente à l’acte, sans doublon. Si l’acquéreur est suivi par un collègue, la répartition 50 % entrée / 50 % sortie est proposée.",
+  },
+  {
+    title: "Graphique de vos honoraires",
+    text: "sur le tableau de bord, la courbe de vos honoraires cumulés depuis janvier, en promesses signées ou en ventes actées, année par année.",
+  },
+  {
+    title: "Onglet « Rémunération »",
+    text: "votre solde dû par l’agence, vos commissions (ou votre salaire brut) à venir, ce que vous avez acquis cette année et le relevé détaillé, calculés automatiquement à chaque vente actée. Agents : déposez vos factures et suivez leur paiement.",
+  },
+  {
+    title: "Saisie d’adresse automatique",
+    text: "tapez le début de l’adresse et choisissez dans la liste ; code postal et ville se remplissent seuls.",
+  },
+  {
+    title: "Relances automatiques",
+    text: "un changement de phase relance automatiquement le suivi (nouvelle date calculée, retard remis à zéro). Et « +7 » donne bien 7 jours.",
+  },
+  {
+    title: "« Mon CA en attente »",
+    text: "le tableau de bord affiche ce que vos ventes sous promesse vous rapporteront une fois signées.",
+  },
+];
+
+export default function ReleaseNotesModal({ version, show, onClosePermanently, onCloseTemporary }) {
   if (!show) return null;
 
   return (
     <div className="admin-modal-backdrop" onClick={onCloseTemporary}>
-      <div
-        className="admin-modal"
-        onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: 720 }}
-      >
+      <div className="admin-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div>
-            <h2 style={{ marginBottom: 6 }}>Bienvenue sur Keepintouch V3</h2>
+            <h2 style={{ marginBottom: 6 }}>Nouveautés de Keepintouch {version}</h2>
             <p style={{ margin: 0, color: "#4b5563", lineHeight: 1.5 }}>
-              La V3 apporte plusieurs améliorations importantes pour le suivi
-              commercial, la sécurité et la lisibilité de l’outil.
+              Moins de saisie, plus de suivi : voici ce qui change pour vous.
             </p>
           </div>
 
@@ -32,53 +67,20 @@ export default function ReleaseNotesModal({
               background: "#f9fafb",
             }}
           >
-            <ul
-              style={{
-                margin: 0,
-                paddingLeft: 18,
-                display: "grid",
-                gap: 8,
-                lineHeight: 1.45,
-              }}
-            >
-              <li>Recherche client plus rapide</li>
-              <li>Vue compacte activée par défaut</li>
-              <li>Tableau de bord enrichi et plus lisible</li>
-              <li>Statistiques et lecture par commercial</li>
-              <li>Comparatif commerciaux dans le dashboard</li>
-              <li>Création des comptes par invitation administrateur</li>
-              <li>Sécurisation renforcée des accès</li>
-              <li>Espace profil utilisateur</li>
-              <li>Changement de mot de passe depuis le profil</li>
-              <li>Passage estimation → mandat</li>
-              <li>Passage mandat → vente</li>
-              <li>Création automatique du client après-vente lors d’une vente</li>
-              <li>Enregistrement de la commission et calcul du CA commercial</li>
-              <li>Emails automatiques de relance paramétrables</li>
-              <li>Améliorations mobile et interface générale</li>
+            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8, lineHeight: 1.45 }}>
+              {NOTES.map((n) => (
+                <li key={n.title}>
+                  <strong>{n.title}</strong> : {n.text}
+                </li>
+              ))}
             </ul>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: 8,
-              marginTop: 4,
-            }}
-          >
-            <button
-              type="button"
-              className="btn-outline"
-              onClick={onCloseTemporary}
-            >
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+            <button type="button" className="btn-outline" onClick={onCloseTemporary}>
               Lire plus tard
             </button>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={onClosePermanently}
-            >
+            <button type="button" className="btn-primary" onClick={onClosePermanently}>
               J’ai lu
             </button>
           </div>

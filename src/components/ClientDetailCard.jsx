@@ -1,5 +1,12 @@
 // src/components/ClientDetailCard.jsx
 import React from "react";
+import { hasNoFollowUp, phaseBadgeClass, sellerPhaseActions } from "../lib/relance";
+
+const PHASE_ACTION_TITLES = {
+  to_mandat: "Mandat signé : relance recalculée automatiquement",
+  to_promise: "Promesse ou compromis signé : enregistrer la transaction",
+  promise_cancelled: "Motif obligatoire ; la fiche repasse sous mandat",
+};
 
 export default function ClientDetailCard({
   c,
@@ -19,7 +26,14 @@ export default function ClientDetailCard({
   openEditModal,
   openClosureModal,
   getSellerStageLabel,
-  handleSetDealStage,
+  onPassMandat,
+  onPromise,
+  onSignSale,
+  onCancelPromise,
+  soldInfo, // fiche vendue : { date, price, feesTtc, feesHt, afterClient, transactionId }
+  formatCurrency,
+  onOpenClient,
+  onOpenTransaction,
 }) {
   const name =
     (c.first_name || "") +
@@ -36,10 +50,18 @@ export default function ClientDetailCard({
   const isSeller = c.category === "seller";
 
   const sellerStageLabel = isSeller ? getSellerStageLabel(c) : "";
-  const sellerStageClass =
-    sellerStageLabel === "Sous mandat"
-      ? "stage-badge stage-badge-mandat"
-      : "stage-badge stage-badge-premandat";
+  const sellerStageClass = phaseBadgeClass(c.deal_stage);
+  const stage = c.deal_stage || "pre_mandat";
+  const isSold = isSeller && stage === "vendu";
+  const isPromise = isSeller && stage === "sous_promesse";
+  const phaseHandlers = {
+    to_mandat: onPassMandat,
+    to_promise: onPromise,
+    deed_signed: onSignSale,
+    promise_cancelled: onCancelPromise,
+  };
+  // Fiche vendue ou clôturée : ni relance, ni retard
+  const showFollowUp = c.status === "active" && !hasNoFollowUp(c);
 
   const delayStyle =
     diffDays == null
@@ -75,6 +97,7 @@ export default function ClientDetailCard({
           <div className="client-name-row">
             <div className="client-name">{name}</div>
             {isSeller && <span className={sellerStageClass}>{sellerStageLabel}</span>}
+            {isBuyer && c.deal_stage === "sous_promesse" && <span className={sellerStageClass}>Sous promesse</span>}
           </div>
 
           {c.email && <div className="client-line">{c.email}</div>}
@@ -132,10 +155,11 @@ export default function ClientDetailCard({
           </div>
         )}
 
-        {isAfter && c.created_at && (
+        {isAfter && (c.sale_completed_at || c.created_at) && (
           <div className="field-row">
             <span className="field-key">Date de vente</span>
-            <span className="field-value">{formatDate(c.created_at)}</span>
+            {/* Ancienne fiche acquéreur devenue après-vente : date de l'acte (sale_completed_at) */}
+            <span className="field-value">{formatDate(c.sale_completed_at || c.created_at)}</span>
           </div>
         )}
 
@@ -256,6 +280,7 @@ export default function ClientDetailCard({
             }}
           />
 
+          {showFollowUp && (
           <div className="nextdue-row">
             <div className="nextdue-label">Prochaine relance</div>
             <input
@@ -297,26 +322,67 @@ export default function ClientDetailCard({
               +30 j
             </button>
           </div>
+          )}
         </div>
       </div>
 
+      {isSold && (
+        <div
+          style={{
+            margin: "10px 0 4px",
+            border: "1px solid #e9d5ff",
+            background: "#faf5ff",
+            borderRadius: 12,
+            padding: 12,
+            fontSize: "0.88rem",
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>Vendu{soldInfo?.date ? ` le ${formatDate(soldInfo.date)}` : ""}</strong>
+          <div>
+            {soldInfo?.price != null && <>Prix : {formatCurrency(soldInfo.price)} · </>}
+            {soldInfo?.feesTtc != null ? (
+              <>
+                Honoraires : {formatCurrency(soldInfo.feesTtc)} TTC ({formatCurrency(soldInfo.feesHt)} HT)
+              </>
+            ) : (
+              "Honoraires : —"
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 4 }}>
+            {soldInfo?.afterClient && (
+              <button type="button" className="link-button" onClick={() => onOpenClient(soldInfo.afterClient)}>
+                Fiche après-vente de l’acquéreur →
+              </button>
+            )}
+            {soldInfo?.transactionId && (
+              <button type="button" className="link-button" onClick={() => onOpenTransaction(soldInfo.transactionId)}>
+                Voir la transaction →
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="client-footer">
-        {c.status === "active" && (
+        {c.status === "active" && !isSold && (
           <>
             <button className="btn-outline-small" onClick={() => handleValidateRelance(c)} type="button">
               Valider relance
             </button>
 
-            {isSeller && c.deal_stage !== "mandat" && (
+            {/* Actions de phase, dans l'ordre : la première est l'action principale */}
+            {sellerPhaseActions(c).map((action) => (
               <button
-                className="btn-outline-small"
-                onClick={() => handleSetDealStage(c, "mandat")}
+                key={action.key}
+                className={action.primary ? "btn-primary" : "btn-outline-small"}
+                onClick={() => phaseHandlers[action.key](c)}
                 type="button"
-                title="Passer ce client en phase mandat"
+                title={action.hint || PHASE_ACTION_TITLES[action.key]}
               >
-                Passer en mandat
+                {action.label}
               </button>
-            )}
+            ))}
 
             <button className="btn-outline-small" onClick={() => openEditModal(c)} type="button">
               Modifier
@@ -324,10 +390,18 @@ export default function ClientDetailCard({
           </>
         )}
 
-        <button className="btn-outline-small" onClick={() => openClosureModal(c)} type="button">
-          Clôturer…
-        </button>
+        {/* Sous promesse : « Acte signé » ou « Promesse annulée » ; vendue : plus aucune action */}
+        {!isPromise && !isSold && (
+          <button className="btn-outline-small" onClick={() => openClosureModal(c)} type="button">
+            Clôturer…
+          </button>
+        )}
       </div>
+      {isPromise && c.status === "active" && (
+        <div style={{ fontSize: "0.78rem", color: "#6b7280", textAlign: "right", marginTop: 4 }}>
+          Acte signé : vente définitive chez le notaire.
+        </div>
+      )}
     </div>
   );
 }

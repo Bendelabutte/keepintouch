@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeStats, commissionHt } from "../stats";
+import { computeStats } from "../stats";
 
 // today = 19/10/2026 → estimations matures : entre le 19/10/2025 et le 21/07/2026 inclus.
 const TODAY = new Date(2026, 9, 19);
@@ -72,30 +72,84 @@ describe("computeStats — mandat → vente", () => {
   });
 });
 
-describe("computeStats — CA de l'année en cours", () => {
-  it("somme TTC et HT des commissions encaissées dans l'année de today", () => {
-    const s = computeStats(
-      [
-        { commission_received_at: "2026-01-01", commission_ttc: 12000, commission_ht: 10000 },
-        { commission_received_at: "2026-12-31", commission_ttc: 6000, commission_vat_rate: 20 },
-        { commission_received_at: "2025-12-31", commission_ttc: 99999, commission_ht: 99999 },
-        { commission_received_at: "2027-01-01", commission_ttc: 99999 },
-        { commission_ttc: 5000 }, // pas encaissée
+describe("computeStats — CA de l'année en cours (transactions)", () => {
+  const LOUIS = "u-louis";
+  const MARIE = "u-marie";
+  const transactions = [
+    {
+      // 12 000 TTC / 10 000 HT, Louis seul entrée + sortie
+      status: "cashed",
+      fees_received_at: "2026-01-01",
+      fees_ttc: 12000,
+      fees_ht: 10000,
+      participants: [
+        { user_id: LOUIS, side: "entree", share_pct: 50 },
+        { user_id: LOUIS, side: "sortie", share_pct: 50 },
       ],
-      TODAY
-    );
+    },
+    {
+      // fees_ht absent → recalculé depuis TTC et TVA ; Louis entrée, Marie sortie
+      status: "cashed",
+      fees_received_at: "2026-12-31",
+      fees_ttc: 6000,
+      vat_rate: 20,
+      participants: [
+        { user_id: LOUIS, side: "entree", share_pct: 50 },
+        { user_id: MARIE, side: "sortie", share_pct: 50 },
+      ],
+    },
+    { status: "cashed", fees_received_at: "2025-12-31", fees_ttc: 99999, fees_ht: 99999, participants: [] },
+    { status: "cashed", fees_received_at: "2027-01-01", fees_ttc: 99999, fees_ht: 99999, participants: [] },
+    { status: "signed", fees_ttc: 5000, fees_ht: 5000, participants: [] }, // pas encaissée
+    {
+      status: "cancelled",
+      fees_received_at: "2026-06-01",
+      fees_ttc: 50000,
+      fees_ht: 50000,
+      participants: [{ user_id: LOUIS, side: "entree", share_pct: 100 }],
+    },
+  ];
+
+  it("CA de l'agence : honoraires bruts encaissés dans l'année, annulées exclues", () => {
+    const s = computeStats([], TODAY, { transactions });
     expect(s.year).toBe(2026);
     expect(s.encaissedCount).toBe(2);
     expect(s.caTtc).toBe(18000);
     expect(s.caHt).toBe(15000);
   });
 
-  it("commissionHt : colonne fournie, sinon TTC / (1 + TVA)", () => {
-    expect(commissionHt({ commission_ht: 800, commission_ttc: 1200 })).toBe(800);
-    expect(commissionHt({ commission_ht: 0, commission_ttc: 1200 })).toBe(0);
-    expect(commissionHt({ commission_ttc: 1200, commission_vat_rate: 20 })).toBe(1000);
-    expect(commissionHt({ commission_ttc: 1000, commission_vat_rate: 0 })).toBe(1000);
-    expect(commissionHt({ commission_ttc: 1200 })).toBe(1000); // TVA absente → 20 %
-    expect(commissionHt({})).toBe(0);
+  it("CA attribué : fees_ht × share_pct sur les participations", () => {
+    const louis = computeStats([], TODAY, { transactions, userIds: [LOUIS] });
+    expect(louis.caHt).toBe(12500); // 10 000 + 5 000 × 50 %
+    expect(louis.caTtc).toBe(15000);
+    expect(louis.encaissedCount).toBe(2);
+
+    const marie = computeStats([], TODAY, { transactions, userIds: [MARIE] });
+    expect(marie.caHt).toBe(2500);
+    expect(marie.encaissedCount).toBe(1);
+
+    const team = computeStats([], TODAY, { transactions, userIds: [LOUIS, MARIE] });
+    expect(team.caHt).toBe(15000);
+  });
+
+  it("les commissions des fiches clients ne comptent plus", () => {
+    const s = computeStats([{ commission_received_at: "2026-03-01", commission_ttc: 12000 }], TODAY);
+    expect(s.caHt).toBe(0);
+    expect(s.encaissedCount).toBe(0);
+  });
+});
+
+describe("computeStats — phase « Sous promesse »", () => {
+  it("une fiche sous promesse compte comme mandat (phase postérieure)", () => {
+    const s = computeStats([{ deal_stage: "sous_promesse" }, { deal_stage: "mandat" }, { deal_stage: "pre_mandat" }], TODAY);
+    expect(s.mandats).toBe(2);
+  });
+});
+
+describe("computeStats — phase « Vendu »", () => {
+  it("une fiche vendue compte comme mandat et comme vente", () => {
+    const s = computeStats([{ deal_stage: "vendu", sale_result: "vendu_avec_nous" }, { deal_stage: "mandat" }], TODAY);
+    expect(s.mandats).toBe(2);
+    expect(s.ventes).toBe(1);
   });
 });

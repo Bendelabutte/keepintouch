@@ -1,12 +1,15 @@
 // src/lib/stats.js
-// Indicateurs commerciaux du tableau de bord, calculés à partir d'une liste de clients.
+// Indicateurs commerciaux du tableau de bord.
+// Taux de conversion : fiches clients. CA : transactions encaissées (honoraires HT bruts).
 import { parseDateStr } from "./dates";
+import { caByUser, isCancelled, round2, transactionFeesHt } from "./transactions";
 
 export const ESTIMATION_MATURITY_DAYS = 90;
 export const ESTIMATION_WINDOW_MONTHS = 12;
-export const DEFAULT_VAT_RATE = 20;
 
-export const isMandat = (c) => Boolean(c?.mandat_at) || c?.deal_stage === "mandat";
+// « Sous promesse » et « Vendu » viennent après le mandat : comptent comme mandat.
+export const isMandat = (c) =>
+  Boolean(c?.mandat_at) || ["mandat", "sous_promesse", "vendu"].includes(c?.deal_stage);
 export const isVenteParNous = (c) => c?.sale_result === "vendu_avec_nous";
 
 const ratioPct = (num, den) => (den === 0 ? 0 : Math.round((num / den) * 1000) / 10);
@@ -16,21 +19,10 @@ const toNumber = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-// commission_ht si la base la fournit, sinon déduite du TTC et du taux de TVA.
-export const commissionHt = (c) => {
-  if (c?.commission_ht !== null && c?.commission_ht !== undefined && c?.commission_ht !== "") {
-    return toNumber(c.commission_ht);
-  }
-  const ttc = toNumber(c?.commission_ttc);
-  if (!ttc) return 0;
-  const rate =
-    c?.commission_vat_rate === null || c?.commission_vat_rate === undefined || c?.commission_vat_rate === ""
-      ? DEFAULT_VAT_RATE
-      : toNumber(c.commission_vat_rate);
-  return Math.round((ttc / (1 + rate / 100)) * 100) / 100;
-};
-
-export const computeStats = (clients, today = new Date()) => {
+// options.transactions : transactions visibles, avec leurs participants.
+// options.userIds : null → CA de l'agence (honoraires HT bruts) ;
+//                   tableau → CA attribué à ces commerciaux (fees_ht × share_pct / 100).
+export const computeStats = (clients, today = new Date(), { transactions = [], userIds = null } = {}) => {
   const list = Array.isArray(clients) ? clients : [];
   const today0 = parseDateStr(today) || parseDateStr(new Date());
 
@@ -55,13 +47,30 @@ export const computeStats = (clients, today = new Date()) => {
   const mandats = list.filter(isMandat);
   const ventes = mandats.filter(isVenteParNous);
 
-  const encaissedThisYear = list.filter((c) => {
-    const d = parseDateStr(c.commission_received_at);
+  // CA : honoraires encaissés dans l'année (fees_received_at), transactions annulées exclues.
+  const cashedThisYear = (Array.isArray(transactions) ? transactions : []).filter((t) => {
+    if (!t || isCancelled(t)) return false;
+    const d = parseDateStr(t.fees_received_at);
     return d !== null && d >= yearStart && d < yearEnd;
   });
 
-  const caTtc = encaissedThisYear.reduce((sum, c) => sum + toNumber(c.commission_ttc), 0);
-  const caHt = encaissedThisYear.reduce((sum, c) => sum + commissionHt(c), 0);
+  let caHt;
+  let caTtc;
+  let encaissedCount;
+
+  if (userIds === null || userIds === undefined) {
+    caHt = round2(cashedThisYear.reduce((sum, t) => sum + transactionFeesHt(t), 0));
+    caTtc = round2(cashedThisYear.reduce((sum, t) => sum + toNumber(t.fees_ttc), 0));
+    encaissedCount = cashedThisYear.length;
+  } else {
+    const ids = [...new Set(userIds)];
+    const sumFor = (byUser) => round2(ids.reduce((sum, id) => sum + (byUser[id] || 0), 0));
+    caHt = sumFor(caByUser(cashedThisYear));
+    caTtc = sumFor(caByUser(cashedThisYear, (t) => toNumber(t.fees_ttc)));
+    encaissedCount = cashedThisYear.filter((t) =>
+      (t.participants || []).some((p) => ids.includes(p.user_id))
+    ).length;
+  }
 
   return {
     estimations: estimationsBase.length,
@@ -73,6 +82,6 @@ export const computeStats = (clients, today = new Date()) => {
     year,
     caTtc,
     caHt,
-    encaissedCount: encaissedThisYear.length,
+    encaissedCount,
   };
 };

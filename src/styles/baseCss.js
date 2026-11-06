@@ -334,6 +334,14 @@ export const baseCss = `
     background: #ecfdf5;
     color: #047857;
   }
+  .stage-badge-promesse {
+    background: #fef3c7;
+    color: #92400e;
+  }
+  .stage-badge-vendu {
+    background: #f3e8ff;
+    color: #6b21a8;
+  }
 
   /* Compact list */
   .compact-list {
@@ -471,6 +479,36 @@ export const baseCss = `
     color: #111827;
     line-height: 1.35;
   }
+  /* Graphique du tableau de bord : pleine largeur, contrôles repliés sous 768 px */
+  .dash-chart-card {
+    margin-top: 18px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .dash-chart-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .dash-chart-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .dash-chart-toggle { display: flex; gap: 6px; }
+  .dash-chart-users { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-bottom: 10px; font-size: 0.85rem; color: #374151; }
+  .dash-chart-chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .dash-chart-swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; border: 1px solid #e5e7eb; }
+  @media (max-width: 768px) {
+    .dash-chart-card { padding: 12px; border-radius: 12px; }
+    .dash-chart-controls, .dash-chart-toggle { width: 100%; }
+    .dash-chart-toggle .tab-button { flex: 1; }
+  }
+
   .conversion-card-sub {
     font-size: 0.82rem;
     color: #6b7280;

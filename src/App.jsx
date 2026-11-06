@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { baseCss } from "./styles/baseCss";
 import { addDaysToDate, parseDateStr, todayStr as getTodayStr } from "./lib/dates";
@@ -9,8 +9,23 @@ import {
   resolveRelanceCfg,
   settingsRowToRelanceConfig,
   relanceConfigToSettingsRow,
+  relanceCfgForClient,
+  PHASE_LABELS,
+  hasNoFollowUp,
+  followUpForEdit,
+  normalizePhase,
+  phaseChangeFollowUp,
 } from "./lib/relance";
 import { fetchAllRows } from "./lib/fetchAll";
+import {
+  buyerPayload,
+  draftBuyerFiche,
+  draftToPayload,
+  emptyTransactionDraft,
+  transactionToDraft,
+} from "./lib/transactionDraft";
+import { isPendingPromise, pendingStats, transactionFeesHt } from "./lib/transactions";
+import { resolveAddressText } from "./lib/address";
 
 import Header from "./components/Header";
 import DashboardCard from "./components/DashboardCard";
@@ -21,6 +36,15 @@ import ClientModal from "./components/ClientModal";
 import ClosureModal from "./components/ClosureModal";
 import ProfileModal from "./components/ProfileModal";
 import ReleaseNotesModal from "./components/ReleaseNotesModal";
+import TransactionFormModal from "./components/TransactionFormModal";
+import TransactionsPage from "./components/TransactionsPage";
+import PromptModal from "./components/PromptModal";
+import CompensationSettingsModal from "./components/CompensationSettingsModal";
+import { projectedCompensation, projectionLabel } from "./lib/compensation";
+
+// recharts chargé à la demande (tableau de bord) : le reste de l'application n'en paie pas le poids.
+const DashboardChart = lazy(() => import("./components/DashboardChart"));
+const CompensationPage = lazy(() => import("./components/CompensationPage"));
 
 function App() {
   // Auth / session
@@ -29,6 +53,8 @@ function App() {
 
   // Page
   const [page, setPage] = useState("clients");
+  // Transaction à ouvrir en arrivant sur la page Transactions (lien depuis une fiche vendue)
+  const [focusTransactionId, setFocusTransactionId] = useState(null);
 
   // Flow reset mdp
   const [isResetFlow, setIsResetFlow] = useState(false);
@@ -94,7 +120,7 @@ function App() {
     }
   });
   const [expandedClientId, setExpandedClientId] = useState(null);
-const RELEASE_NOTES_VERSION = "v3";
+const RELEASE_NOTES_VERSION = "3.2";
 const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   // Rôles
   const [userRole, setUserRole] = useState("user");
@@ -145,19 +171,19 @@ const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   // Modal clôture
   const [closureClient, setClosureClient] = useState(null);
   const [closureReason, setClosureReason] = useState("projet_abandonne");
-  const [afterSaleForm, setAfterSaleForm] = useState({
-    first_name: "",
-    last_name: "",
-    email: "",
-    phone: "",
-    sale_date: "",
-    commission_ttc: "",
-    commission_vat_rate: "20",
-    client_birthday: "",
-    contact_origin: "",
-    consultant_feeling: "",
-    context: "",
-  });
+  // Fenêtre à un seul champ (date de vente, motif d'annulation)
+  const [prompt, setPrompt] = useState(null);
+
+  // Transactions
+  const [transactions, setTransactions] = useState([]);
+  // Réglages de rémunération de l'utilisateur connecté (projection du tableau de bord commercial)
+  const [mySettings, setMySettings] = useState(null);
+  // Paramètres admin → « Rémunération » d'un utilisateur
+  const [compensationTarget, setCompensationTarget] = useState(null);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [transactionsError, setTransactionsError] = useState("");
+  // { mode: "create" | "edit" | "promise", draft, seller? }
+  const [transactionForm, setTransactionForm] = useState(null);
 
   // Admin
   const [adminMsg, setAdminMsg] = useState("");
@@ -194,16 +220,32 @@ const [showReleaseNotes, setShowReleaseNotes] = useState(false);
     } catch (e) {}
   }, [viewMode]);
 
+// Nouveautés : affichées une fois par utilisateur et par version (profil, sinon localStorage).
 useEffect(() => {
   if (!session?.user?.id) return;
+  let cancelled = false;
 
-  try {
-    const key = `kit_release_notes_seen_${RELEASE_NOTES_VERSION}`;
-    const alreadySeen = localStorage.getItem(key) === "true";
-    setShowReleaseNotes(!alreadySeen);
-  } catch (e) {
-    setShowReleaseNotes(true);
-  }
+  const check = async () => {
+    let seenLocally = false;
+    try {
+      seenLocally = localStorage.getItem(`kit_release_notes_seen_${RELEASE_NOTES_VERSION}`) === "true";
+    } catch {
+      seenLocally = false;
+    }
+    let seenOnProfile = false;
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("release_notes_seen")
+      .eq("id", session.user.id)
+      .maybeSingle();
+    if (!error) seenOnProfile = data?.release_notes_seen === RELEASE_NOTES_VERSION;
+    if (!cancelled) setShowReleaseNotes(!(seenOnProfile || seenLocally));
+  };
+
+  check();
+  return () => {
+    cancelled = true;
+  };
 }, [session]);
 
   // ---------- UTIL BASE ----------
@@ -227,14 +269,6 @@ useEffect(() => {
 
   const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
 
-  const parseDecimalInput = (value) => {
-    if (value === null || value === undefined) return null;
-    const normalized = String(value).replace(/\s/g, "").replace(",", ".").trim();
-    if (!normalized) return null;
-    const n = Number(normalized);
-    return Number.isFinite(n) ? n : null;
-  };
-
   const humanCategory = (cat) => {
     if (cat === "seller") return "Vendeur / Bailleur & Estimation";
     if (cat === "buyer") return "Acquéreur";
@@ -248,11 +282,7 @@ useEffect(() => {
 
   const getRelanceCfgForCategory = (category) => resolveRelanceCfg(relanceConfig, category);
 
-  const getSellerStageLabel = (c) => {
-    const v = (c?.deal_stage || "").toLowerCase();
-    if (v === "mandat") return "Sous mandat";
-    return "Pré-mandat";
-  };
+  const getSellerStageLabel = (c) => PHASE_LABELS[normalizePhase(c?.deal_stage)];
 
   const normalizeText = (v) =>
     String(v || "")
@@ -524,13 +554,68 @@ useEffect(() => {
     }
   };
 
+  // RLS : admin tout ; sinon transactions créées par moi, où je participe, ou celles de mes commerciaux.
+  const fetchTransactionsFromDb = async () => {
+    if (!session?.user) return;
+    setTransactionsLoading(true);
+    setTransactionsError("");
+
+    try {
+      const { data, error } = await fetchAllRows(() =>
+        supabase
+          .from("transactions")
+          .select(
+            "*, property:properties(*), " +
+              "participants:transaction_participants(id, user_id, side, share_pct, rate_override), " +
+              "deductions:transaction_deductions(*), " +
+              "seller:clients!transactions_seller_client_id_fkey(id, first_name, last_name), " +
+              "buyer:clients!transactions_buyer_client_id_fkey(id, first_name, last_name)"
+          )
+          .order("id", { ascending: true })
+      );
+      if (error) throw error;
+      setTransactions(data || []);
+    } catch (err) {
+      console.error("Erreur fetchTransactions", err);
+      setTransactionsError("Erreur lors du chargement des transactions : " + (err.message || "voir console (F12)"));
+    } finally {
+      setTransactionsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!session?.user) return;
     fetchClientsFromDb().then(() => {
       fetchCommentsFromDb();
     });
+    fetchTransactionsFromDb();
+    fetchMySettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
+
+  const fetchMySettings = async () => {
+    if (!session?.user) return;
+    const { data, error } = await supabase.rpc("compensation_settings");
+    if (error) {
+      console.warn("Réglages de rémunération indisponibles :", error.message);
+      return;
+    }
+    setMySettings((data || []).find((s) => s.user_id === session.user.id) || null);
+  };
+
+  // Paramètres admin → « Rémunération » : les réglages ne sont pas dans la liste des profils
+  const openCompensationSettings = async (profile) => {
+    const { data, error } = await supabase.rpc("compensation_settings");
+    if (error) {
+      alert("Réglages de rémunération indisponibles : " + error.message);
+      return;
+    }
+    setCompensationTarget({
+      userId: profile.id,
+      label: getCommercialLabel(profile.id) || profile.email,
+      settings: (data || []).find((s) => s.user_id === profile.id) || null,
+    });
+  };
 
   // ---------- FILTRES ----------
 
@@ -550,6 +635,9 @@ useEffect(() => {
   const query_date = (v) => !!v && /^\d{4}-\d{2}-\d{2}/.test(String(v));
 
   const getNextDueDate = (client) => {
+    // Fiche vendue ou clôturée : pas de relance, donc jamais de retard (ni de date recalculée
+    // depuis la date d'estimation).
+    if (hasNoFollowUp(client)) return null;
     if (client.next_due_date) {
       const d = new Date(client.next_due_date);
       if (!Number.isNaN(d.getTime())) return d;
@@ -559,7 +647,7 @@ useEffect(() => {
       if (!Number.isNaN(d.getTime())) return d;
     }
 
-    const cfg = getRelanceCfgForCategory(client.category);
+    const cfg = relanceCfgForClient(relanceConfig, client);
 
     if (client.estimation_date && client.category === "seller") {
       const d = new Date(client.estimation_date);
@@ -620,17 +708,24 @@ useEffect(() => {
     if (cat) list = list.filter((c) => c.category === cat);
 
     if (cat === "seller") {
+      const stage = (c) => c.deal_stage || "pre_mandat";
       if (sellerStageFilter === "mandat") {
-        list = list.filter((c) => (c.deal_stage || "pre_mandat") === "mandat");
+        list = list.filter((c) => stage(c) === "mandat");
+      } else if (sellerStageFilter === "souspromesse") {
+        list = list.filter((c) => stage(c) === "sous_promesse");
+      } else if (sellerStageFilter === "vendu") {
+        list = list.filter((c) => stage(c) === "vendu");
       } else if (sellerStageFilter === "premandat") {
-        list = list.filter((c) => (c.deal_stage || "pre_mandat") !== "mandat");
+        list = list.filter((c) => stage(c) === "pre_mandat");
       }
     }
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    if (statusFilter === "clos") {
+    if (cat === "seller" && sellerStageFilter === "vendu") {
+      // fiches vendues : toutes closes, affichées quel que soit le filtre de statut
+    } else if (statusFilter === "clos") {
       list = list.filter((c) => c.status === "closed");
     } else if (statusFilter === "encours") {
       list = list.filter((c) => c.status !== "closed");
@@ -780,13 +875,6 @@ useEffect(() => {
     }));
   };
 
-  const handleAfterSaleFormChange = (field, value) => {
-    setAfterSaleForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
   const computeInitialNextDue = (cl) => {
     const cfg = getRelanceCfgForCategory(cl.category);
     const initialDays = Number(cfg.initial_days);
@@ -881,12 +969,31 @@ useEffect(() => {
 
     if (newClient.category === "seller") {
       payload.deal_stage = (newClient.deal_stage || "pre_mandat").trim();
+    } else if (newClient.category === "buyer" && newClient.deal_stage === "sous_promesse") {
+      // Acquéreur sous promesse : la phase ne change qu'avec la transaction (acte ou annulation).
+      payload.deal_stage = "sous_promesse";
     } else {
       payload.deal_stage = null;
     }
 
     if (editingClientId) {
       const currentClient = clientsRaw.find((c) => c.id === editingClientId);
+
+      // Changement de phase = relance (commentaire « Phase : … » ajouté en base par trigger).
+      const followUp =
+        newClient.category === "seller"
+          ? followUpForEdit({
+              fromStage: currentClient?.deal_stage,
+              toStage: payload.deal_stage,
+              originalDate: currentClient?.next_due_date || currentClient?.next_followup_at || "",
+              manualDate: newClient.manual_next_due_date,
+              config: relanceConfig,
+            })
+          : null;
+      if (followUp) {
+        payload.next_due_date = followUp.next_due_date;
+        payload.next_due_source = followUp.next_due_source;
+      }
 
       if (
         newClient.category === "seller" &&
@@ -920,6 +1027,7 @@ useEffect(() => {
     setShowAddModal(false);
     setEditingClientId(null);
     await fetchClientsFromDb();
+    await fetchCommentsFromDb();
   } catch (err) {
     console.error("Erreur sauvegarde client", err);
     setLastError(err.message || "Erreur création / modification client");
@@ -969,31 +1077,25 @@ useEffect(() => {
     }
   };
 
-  // ---------- DEAL STAGE ----------
+  // ---------- PHASE VENDEUR ----------
 
-  const handleSetDealStage = async (client, stage) => {
+  // « Passer sous mandat » : un clic. La prochaine relance (aujourd'hui + délai vendeur) et le
+  // commentaire « Phase : Sous mandat » sont posés en base par les triggers de changement de phase.
+  const handlePassMandat = async (client) => {
     try {
       setIsLoading(true);
+      const payload = { deal_stage: "mandat" };
+      if (!client.mandat_at) payload.mandat_at = new Date().toISOString();
 
-      const updatePayload = { deal_stage: stage };
-      if (stage === "mandat" && !client.mandat_at) {
-        updatePayload.mandat_at = new Date().toISOString();
-      }
-
-      const { error } = await supabase.from("clients").update(updatePayload).eq("id", client.id);
+      const { data, error } = await supabase.from("clients").update(payload).eq("id", client.id).select("id");
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error("aucune ligne modifiée (droits insuffisants ?)");
 
-      await supabase.from("client_comments").insert({
-        client_id: client.id,
-        body: `Phase mise à jour : ${stage === "mandat" ? "Sous mandat" : "Pré-mandat"}`,
-        author_id: session.user.id,
-      });
-
-      await fetchCommentsFromDb();
       await fetchClientsFromDb();
+      await fetchCommentsFromDb();
     } catch (err) {
-      console.error("Erreur update deal_stage", err);
-      alert(err.message || "Erreur lors du passage en mandat.");
+      console.error("Erreur passage sous mandat", err);
+      alert("Erreur lors du passage sous mandat : " + (err.message || "voir console (F12)"));
     } finally {
       setIsLoading(false);
     }
@@ -1032,7 +1134,7 @@ useEffect(() => {
       await fetchCommentsFromDb();
 
       const chosen = nextDueInputs[client.id];
-      const cfg = getRelanceCfgForCategory(client.category);
+      const cfg = relanceCfgForClient(relanceConfig, client);
       const defaultNext = Number(cfg.default_next_days);
 
       const nextStr =
@@ -1068,23 +1170,8 @@ useEffect(() => {
   // ---------- CLOTURE ----------
 
   const openClosureModal = (client) => {
-    const todayStr = getTodayStr();
-
     setClosureClient(client);
     setClosureReason("projet_abandonne");
-    setAfterSaleForm({
-      first_name: "",
-      last_name: "",
-      email: "",
-      phone: "",
-      sale_date: todayStr,
-      commission_ttc: "",
-      commission_vat_rate: "20",
-      client_birthday: "",
-      contact_origin: "",
-      consultant_feeling: "",
-      context: "",
-    });
   };
 
   const reasonsForClient = (client) => {
@@ -1104,8 +1191,8 @@ useEffect(() => {
         { value: "ne_souhaite_plus", label: "Ne souhaite plus de suivi" },
       ];
     }
+    // La vente avec nous passe par « Acte signé » (fiche sous promesse) ou par la page Transactions.
     return [
-      { value: "vendu_avec_nous", label: "Vendu par moi" },
       { value: "vendu_autre_agence", label: "Vendu par une autre agence" },
       { value: "vendu_seul", label: "Vendu par le vendeur en direct" },
       { value: "projet_abandonne", label: "Projet abandonné" },
@@ -1123,102 +1210,18 @@ useEffect(() => {
     try {
       setIsLoading(true);
 
-      if (client.category === "seller" && reason === "vendu_avec_nous") {
-        if (!afterSaleForm.last_name.trim()) {
-          alert("Le nom de l’acquéreur est obligatoire.");
-          return;
-        }
-
-        if (!afterSaleForm.phone.trim()) {
-          alert("Le téléphone de l’acquéreur est obligatoire.");
-          return;
-        }
-
-        if (!afterSaleForm.sale_date) {
-          alert("La date encaissement / vente finale est obligatoire.");
-          return;
-        }
-
-        const commissionTtc = parseDecimalInput(afterSaleForm.commission_ttc);
-        if (commissionTtc === null || commissionTtc <= 0) {
-          alert("La commission TTC doit être renseignée et supérieure à 0.");
-          return;
-        }
-
-        const vatRate = parseDecimalInput(afterSaleForm.commission_vat_rate);
-        if (vatRate === null || vatRate < 0) {
-          alert("Le taux de TVA doit être valide.");
-          return;
-        }
-
-        const saleDate = afterSaleForm.sale_date;
-        const nextAfterDue = addDays(saleDate, getRelanceCfgForCategory("after").initial_days);
-
-        const updatePayload = {
-          category: "after",
-          status: "active",
-          first_name: afterSaleForm.first_name || null,
-          last_name: afterSaleForm.last_name || null,
-          email: afterSaleForm.email || null,
-          phone: afterSaleForm.phone || null,
-          created_at: saleDate,
-          after_address: client.property_address || client.after_address || null,
-          client_birthday: afterSaleForm.client_birthday || null,
-          contact_origin: afterSaleForm.contact_origin || null,
-          consultant_feeling: afterSaleForm.consultant_feeling || null,
-          context: afterSaleForm.context || null,
-          next_due_date: nextAfterDue,
-          next_due_note: null,
-          next_due_source: "auto",
-          next_followup_at: null,
-          closure_reason: null,
-          closed_at: null,
-          closed_by: null,
-          deal_stage: null,
-          sale_result: "vendu_avec_nous",
-          sale_completed_at: saleDate,
-          converted_to_after_sale_at: new Date().toISOString(),
-          sold_at: saleDate,
-          commission_received_at: saleDate,
-          commission_ttc: commissionTtc,
-          commission_vat_rate: vatRate,
-          estimation_date: null,
-          acquisition_date: null,
-          property_address: null,
-          project_horizon: null,
-          sale_reason: null,
-          seller_kind: null,
-          project_type: null,
-          area: null,
-          budget_max: null,
-          bedrooms: null,
-          min_surface: null,
-          also_owner: false,
-        };
-
-        const { error: updErr } = await supabase
-          .from("clients")
-          .update(updatePayload)
-          .eq("id", client.id);
-
-        if (updErr) throw updErr;
-
-        const { error: commentErr } = await supabase.from("client_comments").insert({
-          client_id: client.id,
-          body:
-            `Vente conclue par le commercial le ${formatDate(saleDate)}. ` +
-            `Commission TTC : ${formatCurrency(commissionTtc)}. ` +
-            `Client basculé automatiquement en après-vente.`,
-          author_id: session.user.id,
+      // Fiche sous promesse (ou promesse en cours) : annulation + clôture + commentaire en un seul appel.
+      if (client.category === "seller" && (client.deal_stage === "sous_promesse" || findOpenPromise(client))) {
+        const { error: closeErr } = await supabase.rpc("close_seller_with_promise", {
+          p_client_id: client.id,
+          p_reason: reason,
         });
-
-        if (commentErr) {
-          console.warn("Erreur insertion commentaire bascule après-vente :", commentErr.message);
+        if (closeErr) {
+          alert("Erreur lors de la clôture du client : " + closeErr.message);
+          return;
         }
-
         setClosureClient(null);
-        await fetchCommentsFromDb();
-        await fetchClientsFromDb();
+        await reloadAfterTransaction();
         return;
       }
 
@@ -1278,6 +1281,149 @@ useEffect(() => {
     }
   };
 
+  // ---------- TRANSACTIONS ----------
+
+  const openNewTransaction = (kind) => {
+    setTransactionForm({ mode: "create", draft: emptyTransactionDraft({ kind, userId: session.user.id }) });
+  };
+
+  const openEditTransaction = (tx) => {
+    // Répartition modifiable par l'admin seulement (un commercial ne voit que sa propre ligne).
+    setTransactionForm({ mode: "edit", draft: transactionToDraft(tx, { canEditSplit: isAdmin }) });
+  };
+
+  const findOpenPromise = (client) =>
+    transactions.find((t) => isPendingPromise(t) && t.seller_client_id === client.id) || null;
+
+  const nextAfterSaleDue = (saleDate) => addDays(saleDate, getRelanceCfgForCategory("after").initial_days);
+
+  const reloadAfterTransaction = async () => {
+    await Promise.all([fetchClientsFromDb(), fetchTransactionsFromDb()]);
+    await fetchCommentsFromDb();
+  };
+
+  // Fiche vendeur → « Sous promesse » : formulaire minimal pré-rempli (bien, vendeur, propriétaire 100 %).
+  const openPromiseForm = async (client) => {
+    const draft = emptyTransactionDraft({ kind: "sale", userId: client.owner_id });
+    setIsLoading(true);
+    try {
+      draft.property = { ...draft.property, ...(await resolveAddressText(client.property_address)) };
+    } finally {
+      setIsLoading(false);
+    }
+    draft.seller_mode = "client";
+    draft.seller_client_id = client.id;
+    draft.date_kind = "promise";
+    draft.date = getTodayStr();
+    setTransactionForm({ mode: "promise", draft, seller: client });
+  };
+
+  // « Acte signé » / « Marquer comme vendue » : seule la date de l'acte est demandée.
+  const openSignSale = (tx) => {
+    if (!tx) {
+      alert("Aucune promesse en cours trouvée pour cette fiche.");
+      return;
+    }
+    setPrompt({
+      title: "Acte signé",
+      text: tx.buyer_client_id
+        ? "Vente définitive chez le notaire. La fiche vendeur passe « Vendu » et la fiche de l'acquéreur devient sa fiche après-vente."
+        : "Vente définitive chez le notaire. La fiche vendeur passe « Vendu » et la fiche après-vente de l'acquéreur est créée automatiquement.",
+      label: "Date de l'acte",
+      type: "date",
+      initialValue: getTodayStr(),
+      confirmLabel: "Confirmer l'acte",
+      onConfirm: async (date) => {
+        const { error } = await supabase.rpc("sign_promise_sale", {
+          p_id: tx.id,
+          p_deed_date: date,
+          p_next_due_date: nextAfterSaleDue(date),
+        });
+        if (error) throw error;
+        setPrompt(null);
+        await reloadAfterTransaction();
+      },
+    });
+  };
+
+  // « Promesse annulée » / « Annuler la transaction » : motif obligatoire.
+  const openCancelTransaction = (tx, client = null) => {
+    const isPromise = !tx || isPendingPromise(tx);
+    setPrompt({
+      title: isPromise ? "Promesse annulée" : "Annuler la transaction",
+      text: isPromise
+        ? "La transaction est annulée et la fiche vendeur repasse « Sous mandat »" +
+          (tx?.buyer_client_id ? " ; la fiche de l'acquéreur redevient acquéreur actif." : ".")
+        : null,
+      label: "Motif",
+      type: "textarea",
+      confirmLabel: "Confirmer l'annulation",
+      onConfirm: async (reason) => {
+        if (tx) {
+          const { error } = await supabase.rpc("cancel_transaction", { p_id: tx.id, p_reason: reason });
+          if (error) throw error;
+        } else if (client) {
+          // Fiche sous promesse sans transaction visible : simple retour en phase mandat.
+          const { error } = await supabase.from("clients").update({ deal_stage: "mandat" }).eq("id", client.id);
+          if (error) throw error;
+          await supabase.from("client_comments").insert({
+            client_id: client.id,
+            body: `Promesse annulée : ${reason}. Retour en phase « Sous mandat ».`,
+            author_id: session.user.id,
+          });
+        }
+        setPrompt(null);
+        await reloadAfterTransaction();
+      },
+    });
+  };
+
+  // Lève une erreur en cas d'échec : le formulaire l'affiche et reste ouvert.
+  const handleSubmitTransaction = async (draft) => {
+    if (!transactionForm) return;
+    const payload = draftToPayload(draft);
+
+    if (transactionForm.mode === "promise") {
+      const { error } = await supabase.rpc("record_promise", {
+        p_seller_id: transactionForm.seller.id,
+        p_transaction: payload,
+        // Fiche acquéreur existante : reliée via p_transaction.buyer_client_id, pas de saisie libre.
+        p_buyer: draft.buyer_mode === "client" && draft.buyer_client_id ? null : buyerPayload(draft.buyer),
+        p_next_due_date: phaseChangeFollowUp({
+          toStage: "sous_promesse",
+          config: relanceConfig,
+          promiseDate: payload.preliminary_date,
+        }).next_due_date,
+      });
+      if (error) throw error;
+
+      setTransactionForm(null);
+      await reloadAfterTransaction();
+      return;
+    }
+
+    // Vente : transaction + fiche après-vente (si demandée) + phase du vendeur relié, en un seul appel.
+    const buyerFiche = draftBuyerFiche(draft);
+    if (buyerFiche || (transactionForm.mode === "create" && draft.kind === "sale")) {
+      const saleDate = payload.deed_date || payload.preliminary_date || getTodayStr();
+      const { error } = await supabase.rpc("save_transaction_with_buyer", {
+        p: payload,
+        p_buyer: buyerFiche ? { ...buyerFiche, next_due_date: nextAfterSaleDue(saleDate) } : null,
+      });
+      if (error) throw error;
+
+      setTransactionForm(null);
+      await reloadAfterTransaction();
+      return;
+    }
+
+    const { error } = await supabase.rpc("save_transaction", { p: payload });
+    if (error) throw error;
+
+    setTransactionForm(null);
+    await fetchTransactionsFromDb();
+  };
+
   // ---------- LOGOUT ----------
 
   const handleLogout = async () => {
@@ -1286,6 +1432,8 @@ useEffect(() => {
       setSession(null);
       setClientsRaw([]);
       setClients([]);
+      setTransactions([]);
+      setTransactionForm(null);
       setIsResetFlow(false);
       setUserRole("user");
       setIsAdmin(false);
@@ -1500,6 +1648,38 @@ useEffect(() => {
   const isMobileView =
     typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
 
+  // Fiche vendue : transaction encaissée et fiche après-vente de l'acquéreur.
+  const soldInfoFor = (c) => {
+    if (c.category !== "seller" || c.deal_stage !== "vendu") return null;
+    const tx = transactions
+      .filter((t) => t.seller_client_id === c.id && t.status === "cashed")
+      .sort((a, b) => String(b.deed_date || "").localeCompare(String(a.deed_date || "")))[0];
+    const afterClient =
+      (tx?.buyer_client_id && clientsRaw.find((x) => x.id === tx.buyer_client_id)) ||
+      clientsRaw.find((x) => x.category === "after" && x.source_client_id === c.id) ||
+      null;
+    return {
+      date: tx?.deed_date || c.sale_completed_at || null,
+      price: tx?.price ?? null,
+      feesTtc: tx?.fees_ttc ?? null,
+      feesHt: tx ? transactionFeesHt(tx) : null,
+      afterClient,
+      transactionId: tx?.id || null,
+    };
+  };
+
+  const openClientFiche = (client) => {
+    setPage("clients");
+    setCurrentTab(client.category === "after" ? "apresvente" : client.category === "buyer" ? "acquereur" : "vendeur");
+    setStatusFilter("tous");
+    setSearchTerm([client.first_name, client.last_name].filter(Boolean).join(" "));
+  };
+
+  const openTransaction = (id) => {
+    setFocusTransactionId(id);
+    setPage("transactions");
+  };
+
   const renderClientDetailCard = (c) => (
     <ClientDetailCard
       c={c}
@@ -1519,7 +1699,14 @@ useEffect(() => {
       openEditModal={openEditModal}
       openClosureModal={openClosureModal}
       getSellerStageLabel={getSellerStageLabel}
-      handleSetDealStage={handleSetDealStage}
+      onPassMandat={handlePassMandat}
+      onPromise={openPromiseForm}
+      soldInfo={soldInfoFor(c)}
+      formatCurrency={formatCurrency}
+      onOpenClient={openClientFiche}
+      onOpenTransaction={openTransaction}
+      onSignSale={(client) => openSignSale(findOpenPromise(client))}
+      onCancelPromise={(client) => openCancelTransaction(findOpenPromise(client), client)}
     />
   );
 
@@ -2083,9 +2270,29 @@ useEffect(() => {
     return { score: score.toFixed(1), reasons, tips };
   }, [dashboardClientsRaw, relanceConfig, today0]);
 
+  // CA : null → CA de l'agence (honoraires bruts) ; sinon CA attribué aux commerciaux sélectionnés.
+  const dashboardCaUserIds = useMemo(() => {
+    if (!session?.user) return [];
+    if (!isAdmin && !isManager) return [session.user.id];
+    if (dashboardCommercialFilter === "Tous") {
+      return isAdmin ? null : dashboardFilterOptions.map((p) => p.id);
+    }
+    return dashboardFilterOptions.filter((p) => p.email === dashboardCommercialFilter).map((p) => p.id);
+  }, [session, isAdmin, isManager, dashboardCommercialFilter, dashboardFilterOptions]);
+
   const dashboardStats = useMemo(
-    () => computeStats(dashboardClientsRaw, today0),
-    [dashboardClientsRaw, today0]
+    () => computeStats(dashboardClientsRaw, today0, { transactions, userIds: dashboardCaUserIds }),
+    [dashboardClientsRaw, today0, transactions, dashboardCaUserIds]
+  );
+
+  const myProjection = useMemo(
+    () => projectedCompensation(transactions, session?.user?.id, mySettings),
+    [transactions, session, mySettings]
+  );
+
+  const dashboardPending = useMemo(
+    () => pendingStats(transactions, dashboardCaUserIds),
+    [transactions, dashboardCaUserIds]
   );
 
   const comparisonRows = useMemo(() => {
@@ -2099,7 +2306,7 @@ useEffect(() => {
         );
 
         const active = ownerClients.filter((c) => c.status !== "closed");
-        const stats = computeStats(ownerClients, today0);
+        const stats = computeStats(ownerClients, today0, { transactions, userIds: [profile.id] });
 
         const dueNow = active.filter((c) => {
           const nd = getNextDueDate(c);
@@ -2146,6 +2353,7 @@ useEffect(() => {
     dashboardFilterOptions,
     accessibleComparisonClientsRaw,
     today0,
+    transactions,
   ]);
 
   const comparisonMaxCa = useMemo(() => {
@@ -2153,12 +2361,20 @@ useEffect(() => {
     return Math.max(...comparisonRows.map((r) => r.caHt), 0);
   }, [comparisonRows]);
 
-const handleCloseReleaseNotesPermanently = () => {
-  try {
-    const key = `kit_release_notes_seen_${RELEASE_NOTES_VERSION}`;
-    localStorage.setItem(key, "true");
-  } catch (e) {}
+const handleCloseReleaseNotesPermanently = async () => {
   setShowReleaseNotes(false);
+  try {
+    localStorage.setItem(`kit_release_notes_seen_${RELEASE_NOTES_VERSION}`, "true");
+  } catch {
+    // stockage indisponible : la mémorisation sur le profil suffit
+  }
+  if (session?.user?.id) {
+    const { error } = await supabase
+      .from("profiles")
+      .update({ release_notes_seen: RELEASE_NOTES_VERSION })
+      .eq("id", session.user.id);
+    if (error) console.warn("Mémorisation des nouveautés sur le profil impossible :", error.message);
+  }
 };
 
 const handleCloseReleaseNotesTemporary = () => {
@@ -2396,11 +2612,46 @@ const handleCloseReleaseNotesTemporary = () => {
         showProfileMenu={showProfileMenu}
         setShowProfileMenu={setShowProfileMenu}
         setShowProfileModal={setShowProfileModal}
+        onShowReleaseNotes={() => setShowReleaseNotes(true)}
       />
 
-      <main className="main">
+      <main className="main" style={page === "transactions" ? { maxWidth: "none" } : undefined}>
         {settingsError && <p className="error-text">{settingsError}</p>}
-        {page === "dashboard" ? (
+        {page === "remuneration" ? (
+          <Suspense fallback={<p>Chargement…</p>}>
+          <CompensationPage
+            userId={session.user.id}
+            isAdmin={isAdmin}
+            isManager={isManager}
+            profiles={profiles}
+            profileLabel={getCommercialLabel}
+            transactions={transactions}
+            formatCurrency={formatCurrency}
+            formatDate={formatDate}
+          />
+          </Suspense>
+        ) : page === "transactions" ? (
+          <TransactionsPage
+            transactions={transactions}
+            loading={transactionsLoading}
+            loadError={transactionsError}
+            onReload={reloadAfterTransaction}
+            managedUserIds={managedUserIds}
+            focusTransactionId={focusTransactionId}
+            onFocusHandled={() => setFocusTransactionId(null)}
+            onSignSale={openSignSale}
+            onCancel={(tx) => openCancelTransaction(tx)}
+            isAdmin={isAdmin}
+            isManager={isManager}
+            userId={session.user.id}
+            filterProfiles={dashboardFilterOptions}
+            profileLabel={getCommercialLabel}
+            formatCurrency={formatCurrency}
+            formatDate={formatDate}
+            onNew={openNewTransaction}
+            onEdit={openEditTransaction}
+          />
+        ) : page === "dashboard" ? (
           <>
             <div
               style={{
@@ -2591,11 +2842,11 @@ const handleCloseReleaseNotesTemporary = () => {
                   {formatCurrency(dashboardStats.caTtc)}
                 </div>
                 <div className="conversion-card-meta">
-                  {dashboardStats.encaissedCount} vente(s) encaissée(s)
+                  {dashboardStats.encaissedCount} vente(s) ou location(s) encaissée(s)
                 </div>
                 <div className="conversion-card-sub">
-                  Base : commissions dont la date d’encaissement est en{" "}
-                  {dashboardStats.year}.
+                  Base : honoraires des ventes conclues et locations encaissées en {dashboardStats.year}, annulées
+                  exclues{dashboardCaUserIds === null ? "" : ", au prorata des parts du ou des commerciaux"}.
                 </div>
               </div>
 
@@ -2607,13 +2858,61 @@ const handleCloseReleaseNotesTemporary = () => {
                   {formatCurrency(dashboardStats.caHt)}
                 </div>
                 <div className="conversion-card-meta">
-                  Calculé automatiquement depuis le TTC et la TVA
+                  Honoraires HT bruts, avant déductions
                 </div>
                 <div className="conversion-card-sub">
-                  Base : mêmes ventes encaissées que le CA TTC.
+                  Base : mêmes ventes et locations que le CA TTC.
                 </div>
               </div>
+
+              {dashboardCaUserIds === null ? (
+                <div className="conversion-card">
+                  <div className="conversion-card-title">CA en attente (promesses signées)</div>
+                  <div className="conversion-card-value">{formatCurrency(dashboardPending.feesHt)}</div>
+                  <div className="conversion-card-meta">
+                    {dashboardPending.count} promesse(s) en cours · base nette{" "}
+                    {formatCurrency(dashboardPending.netHt)}
+                  </div>
+                  <div className="conversion-card-sub">Honoraires HT des ventes sous promesse.</div>
+                </div>
+              ) : !isAdmin && !isManager ? (
+                <div className="conversion-card">
+                  <div className="conversion-card-title">{projectionLabel(mySettings?.compensation_type)}</div>
+                  <div className="conversion-card-value">{formatCurrency(myProjection.amount_due)}</div>
+                  <div className="conversion-card-meta">
+                    {dashboardPending.count} promesse(s) en cours · part nette {formatCurrency(dashboardPending.shareNetHt)}
+                  </div>
+                  <div className="conversion-card-sub">
+                    {myProjection.incomplete
+                      ? "Projection indisponible : vos taux de rémunération ne sont pas encore renseignés."
+                      : "Projection sur vos ventes sous promesse, à vos taux actuels" +
+                        (mySettings?.compensation_type === "agent_tva" ? ", TVA comprise." : ".")}
+                  </div>
+                </div>
+              ) : (
+                <div className="conversion-card">
+                  <div className="conversion-card-title">CA en attente</div>
+                  <div className="conversion-card-value">{formatCurrency(dashboardPending.shareNetHt)}</div>
+                  <div className="conversion-card-meta">{dashboardPending.count} promesse(s) en cours</div>
+                  <div className="conversion-card-sub">
+                    Projection sur les ventes sous promesse (part de base nette HT).
+                  </div>
+                </div>
+              )}
+
             </div>
+
+            <Suspense fallback={<div className="dash-chart-card conversion-card-sub">Chargement du graphique…</div>}>
+            <DashboardChart
+              transactions={transactions}
+              isAdmin={isAdmin}
+              isManager={isManager}
+              userId={session.user.id}
+              teamIds={dashboardFilterOptions.map((p) => p.id)}
+              commercials={dashboardFilterOptions.map((p) => ({ id: p.id, label: getProfileLabel(p) }))}
+              formatCurrency={formatCurrency}
+            />
+            </Suspense>
 
             {(isAdmin || isManager) && (
               <>
@@ -2636,12 +2935,19 @@ const handleCloseReleaseNotesTemporary = () => {
                     Comparatif commerciaux
                   </div>
 
-                  <div style={{ overflowX: "auto" }}>
+                  <style>{`
+                    .cmp-cards { display: none; }
+                    @media (max-width: 1279px) { .cmp-secondary { display: none; } }
+                    @media (max-width: 1023px) {
+                      .cmp-table-wrap { display: none; }
+                      .cmp-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+                    }
+                  `}</style>
+                  <div className="cmp-table-wrap">
                     <table
                       style={{
                         width: "100%",
                         borderCollapse: "collapse",
-                        minWidth: 920,
                         fontSize: "0.92rem",
                       }}
                     >
@@ -2649,7 +2955,7 @@ const handleCloseReleaseNotesTemporary = () => {
                         <tr style={{ background: "#f9fafb" }}>
                          {[
   { key: "commercial", label: <>Commercial</> },
-  { key: "active", label: <>Clients<br />actifs</> },
+  { key: "active", label: <>Clients<br />actifs</>, secondary: true },
   { key: "estimations", label: <>Estimations</> },
   { key: "mandats", label: <>Mandats</> },
   { key: "ventes", label: <>Ventes</> },
@@ -2657,10 +2963,11 @@ const handleCloseReleaseNotesTemporary = () => {
   { key: "tx_mandat_vente", label: <>Tx mandat<br />→ vente</> },
   { key: "ca_ht", label: <>CA HT</> },
   { key: "due", label: <>À<br />relancer</> },
-  { key: "late", label: <>Retards<br />&gt; 2j</> },
+  { key: "late", label: <>Retards<br />&gt; 2j</>, secondary: true },
 ].map((h) => (
   <th
     key={h.key}
+    className={h.secondary ? "cmp-secondary" : undefined}
     style={{
       textAlign: "left",
       padding: "8px 10px",
@@ -2697,7 +3004,7 @@ const handleCloseReleaseNotesTemporary = () => {
   >
     {row.label}
   </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
+  <td className="cmp-secondary" style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
     {row.activeCount}
   </td>
   <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
@@ -2732,6 +3039,7 @@ const handleCloseReleaseNotesTemporary = () => {
     {row.dueCount}
   </td>
   <td
+    className="cmp-secondary"
     style={{
       padding: "8px 10px",
       borderBottom: "1px solid #f1f5f9",
@@ -2745,6 +3053,32 @@ const handleCloseReleaseNotesTemporary = () => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+
+                  <div className="cmp-cards">
+                    {comparisonRows.map((row) => (
+                      <div
+                        key={row.id}
+                        style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, fontSize: "0.88rem" }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <strong>{row.label}</strong>
+                          <strong>{formatCurrency(row.caHt)}</strong>
+                        </div>
+                        <div style={{ color: "#4b5563", marginTop: 6, lineHeight: 1.5 }}>
+                          {row.activeCount} actifs · {row.estimations} estim. · {row.mandats} mandats ·{" "}
+                          {row.ventes} ventes
+                          <br />
+                          Est. → mandat {formatPercent(row.txEstimationMandat)} · Mandat → vente{" "}
+                          {formatPercent(row.txMandatVente)}
+                          <br />
+                          À relancer {row.dueCount}
+                          {row.late2Count > 0 && (
+                            <span style={{ color: "#b91c1c", fontWeight: 700 }}> · {row.late2Count} en retard</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -2932,6 +3266,24 @@ const handleCloseReleaseNotesTemporary = () => {
                   </button>
                   <button
                     className={
+                      "tab-button" + (sellerStageFilter === "souspromesse" ? " tab-button-active" : "")
+                    }
+                    onClick={() => setSellerStageFilter("souspromesse")}
+                    type="button"
+                  >
+                    Sous promesse
+                  </button>
+                  <button
+                    className={
+                      "tab-button" + (sellerStageFilter === "vendu" ? " tab-button-active" : "")
+                    }
+                    onClick={() => setSellerStageFilter("vendu")}
+                    type="button"
+                  >
+                    Vendu
+                  </button>
+                  <button
+                    className={
                       "tab-button" + (sellerStageFilter === "tous" ? " tab-button-active" : "")
                     }
                     onClick={() => setSellerStageFilter("tous")}
@@ -3021,12 +3373,13 @@ const handleCloseReleaseNotesTemporary = () => {
               renderClientsBlock(afters, makeSectionTitle(afterTitle, afters.length), "after")
             )}
 
-            <footer className="app-footer">© Benjamin Rondreux — Keepintouch 3.1 — 2026</footer>
+            <footer className="app-footer">© Benjamin Rondreux — Keepintouch {RELEASE_NOTES_VERSION} — 2026</footer>
           </>
         )}
       </main>
 
 <ReleaseNotesModal
+  version={RELEASE_NOTES_VERSION}
   show={showReleaseNotes}
   onClosePermanently={handleCloseReleaseNotesPermanently}
   onCloseTemporary={handleCloseReleaseNotesTemporary}
@@ -3058,6 +3411,7 @@ const handleCloseReleaseNotesTemporary = () => {
         updateEmailNotificationField={updateEmailNotificationField}
         saveEmailNotificationConfig={saveEmailNotificationConfig}
         saveAdminSettings={saveAdminSettings}
+        onOpenCompensation={openCompensationSettings}
       />
 
       <ClientModal
@@ -3077,8 +3431,39 @@ const handleCloseReleaseNotesTemporary = () => {
         closureReason={closureReason}
         setClosureReason={setClosureReason}
         handleConfirmClosure={handleConfirmClosure}
-        afterSaleForm={afterSaleForm}
-        handleAfterSaleFormChange={handleAfterSaleFormChange}
+      />
+
+      <PromptModal prompt={prompt} onCancel={() => setPrompt(null)} />
+
+      <TransactionFormModal
+        open={!!transactionForm}
+        mode={transactionForm?.mode}
+        initialDraft={transactionForm?.draft || null}
+        closureInfo={
+          transactionForm?.seller
+            ? {
+                sellerLabel:
+                  [transactionForm.seller.first_name, transactionForm.seller.last_name]
+                    .filter(Boolean)
+                    .join(" ") || "Fiche vendeur",
+              }
+            : null
+        }
+        profiles={commercials}
+        clients={clientsRaw}
+        profileLabel={getCommercialLabel}
+        formatCurrency={formatCurrency}
+        onCancel={() => setTransactionForm(null)}
+        onSubmit={handleSubmitTransaction}
+      />
+
+      <CompensationSettingsModal
+        target={compensationTarget}
+        onCancel={() => setCompensationTarget(null)}
+        onSaved={() => {
+          setCompensationTarget(null);
+          fetchMySettings();
+        }}
       />
 
       <ProfileModal

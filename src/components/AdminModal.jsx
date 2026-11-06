@@ -1,5 +1,6 @@
 // src/components/AdminModal.jsx
 import React from "react";
+import { RELANCE_PROMESSE_DAYS } from "../lib/relance";
 
 export default function AdminModal({
   isAdmin,
@@ -25,6 +26,7 @@ export default function AdminModal({
   emailNotificationConfig,
   updateEmailNotificationField,
   saveAdminSettings,
+  onOpenCompensation,
 }) {
   if (!showAdminPanel || !isAdmin) return null;
 
@@ -147,18 +149,28 @@ export default function AdminModal({
                         </div>
                       </div>
 
-                      {p.id !== session.user.id ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                         <button
                           type="button"
                           className="btn-outline-small"
                           disabled={adminBusy}
-                          onClick={() => toggleUserActive(p.id, false)}
+                          onClick={() => onOpenCompensation(p)}
                         >
-                          Désactiver
+                          Rémunération
                         </button>
-                      ) : (
-                        <span className="admin-chip admin-chip-neutral">Connecté</span>
-                      )}
+                        {p.id !== session.user.id ? (
+                          <button
+                            type="button"
+                            className="btn-outline-small"
+                            disabled={adminBusy}
+                            onClick={() => toggleUserActive(p.id, false)}
+                          >
+                            Désactiver
+                          </button>
+                        ) : (
+                          <span className="admin-chip admin-chip-neutral">Connecté</span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -227,6 +239,22 @@ export default function AdminModal({
                   </label>
                 </div>
               ))}
+
+              <div className="admin-delay-box">
+                <div className="admin-delay-title">Vendeur sous promesse</div>
+                <label>
+                  Relance sous promesse (jours)
+                  <input
+                    type="number"
+                    min="0"
+                    value={relanceConfig?.promise?.default_next_days ?? RELANCE_PROMESSE_DAYS}
+                    onChange={(e) => updateRelanceCfgField("promise", "default_next_days", e.target.value)}
+                  />
+                </label>
+                <div className="admin-card-sub">
+                  Après la date de promesse, puis entre deux relances tant que la vente n’est pas signée.
+                </div>
+              </div>
             </div>
           </section>
 
