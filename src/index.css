@@ -1,1 +1,107 @@
 @import "tailwindcss";
+@import "./styles/legacy.css";
+
+/*
+ * Jetons de design Keepintouch : le SEUL endroit où se définissent couleurs, polices, rayons,
+ * ombres et espacements de mise en page. Les composants (src/components/ui) et les styles
+ * hérités (src/styles/legacy.css) n'utilisent que ces variables.
+ *
+ * Identité : indigo profond (confiance, sérieux) + corail (ce qui demande une action),
+ * neutres froids, titres Manrope, texte Inter, chiffres tabulaires.
+ */
+@theme {
+  /* Neutres */
+  --color-canvas: #f5f6fa;
+  --color-surface: #ffffff;
+  --color-subtle: #f0f2f7;
+  --color-line: #e4e7ef;
+  --color-line-strong: #cbd1dc;
+  --color-ink: #0f172a;
+  --color-ink-soft: #334155;
+  --color-ink-muted: #5b6474;
+
+  /* Couleur principale : indigo profond */
+  --color-primary: #3730a3;
+  --color-primary-hover: #312e81;
+  --color-primary-soft: #eef2ff;
+  --color-primary-line: #c7d2fe;
+
+  /* Accent : corail (ajout, à relancer aujourd'hui) */
+  --color-accent: #ea580c;
+  --color-accent-hover: #c2410c;
+  --color-accent-soft: #fff1e7;
+
+  /* États */
+  --color-success: #15803d;
+  --color-success-soft: #dcfce7;
+  --color-warning: #b45309;
+  --color-warning-soft: #fef3c7;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fee2e2;
+  --color-info: #0369a1;
+  --color-info-soft: #e0f2fe;
+
+  /* Navigation latérale */
+  --color-nav: #1e1b4b;
+  --color-nav-hover: #2b2766;
+  --color-nav-active: #3730a3;
+  --color-nav-ink: #c7d2fe;
+
+  /* Typographie */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Manrope", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Rayons et ombres */
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 1px rgb(15 23 42 / 0.03);
+  --shadow-pop: 0 12px 32px rgb(15 23 42 / 0.14), 0 2px 6px rgb(15 23 42 / 0.06);
+
+  /* Mise en page */
+  --spacing-sidebar: 15rem;
+  --container-page: 72rem;
+  --spacing-bottom-nav: 4rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  /* Montants et dates alignés dans les listes et tableaux */
+  table,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes kit-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

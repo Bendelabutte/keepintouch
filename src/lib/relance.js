@@ -163,7 +163,8 @@ export const sellerPhaseActions = (client) => {
 };
 
 // --- Première relance à la création d'une fiche ---
-// Vendeur avec date d'estimation : lendemain de l'estimation, note « Envoyer l'estimation » ; une fois
+// Vendeur avec date d'estimation : lendemain de l'estimation (aujourd'hui s'il est déjà passé), note
+// « Envoyer l'estimation » ; une fois
 // cette relance validée, la suivante suit le délai par défaut vendeur (validation normale).
 // Sinon : date de référence de la catégorie (enregistrement acquéreur, vente après-vente, ou
 // aujourd'hui) + 1re relance de la catégorie.
@@ -172,11 +173,14 @@ export const ESTIMATION_FOLLOWUP_NOTE = "Envoyer l’estimation";
 export const initialFollowUp = (client, config, today = new Date()) => {
   const cat = normalizeCategory(client?.category);
   if (cat === "seller" && parseDateStr(client?.estimation_date)) {
-    return { next_due_date: addDaysToDate(client.estimation_date, 1), next_due_note: ESTIMATION_FOLLOWUP_NOTE };
+    // Lendemain de l'estimation, ou aujourd'hui si ce lendemain est déjà passé
+    const next = addDaysToDate(client.estimation_date, 1);
+    const todayDate = addDaysToDate(today, 0);
+    return { next_due_date: next < todayDate ? todayDate : next, next_due_note: ESTIMATION_FOLLOWUP_NOTE };
   }
   const base =
     (cat === "buyer" && parseDateStr(client?.acquisition_date)) ||
-    (cat === "after" && parseDateStr(client?.created_at)) ||
+    (cat === "after" && (parseDateStr(client?.sale_completed_at) || parseDateStr(client?.created_at))) ||
     today;
   return { next_due_date: addDaysToDate(base, resolveRelanceCfg(config, cat).initial_days), next_due_note: null };
 };

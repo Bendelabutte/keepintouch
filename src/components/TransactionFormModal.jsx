@@ -28,20 +28,20 @@ const str = (v) => (v === null || v === undefined ? "" : String(v));
 const fieldStyle = {
   width: "100%",
   padding: "9px 11px",
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--color-line-strong)",
   borderRadius: 10,
   fontSize: "0.92rem",
-  background: "#fff",
+  background: "var(--color-surface)",
   boxSizing: "border-box",
   marginTop: 4,
 };
-const labelStyle = { display: "block", fontSize: "0.85rem", fontWeight: 600, color: "#111827" };
+const labelStyle = { display: "block", fontSize: "0.85rem", fontWeight: 600, color: "var(--color-ink)" };
 const sectionStyle = {
   marginTop: 16,
-  border: "1px solid #e5e7eb",
+  border: "1px solid var(--color-line)",
   borderRadius: 14,
   padding: 14,
-  background: "#f9fafb",
+  background: "var(--color-subtle)",
 };
 const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 };
 
@@ -89,7 +89,7 @@ function PartyField({ title, prefix, draft, set, clients, categories, locked, lo
     return (
       <div style={labelStyle}>
         {title}
-        <div style={{ ...fieldStyle, background: "#f3f4f6", fontWeight: 400 }}>{lockedLabel}</div>
+        <div style={{ ...fieldStyle, background: "var(--color-subtle)", fontWeight: 400 }}>{lockedLabel}</div>
       </div>
     );
   }
@@ -156,7 +156,7 @@ export function DeductionAddForm({ onAdd, disabled }) {
   };
 
   return (
-    <div style={{ marginTop: 10, borderTop: "1px dashed #d1d5db", paddingTop: 10 }}>
+    <div style={{ marginTop: 10, borderTop: "1px dashed var(--color-line-strong)", paddingTop: 10 }}>
       <div style={gridStyle}>
         <label style={labelStyle}>
           Libellé *
@@ -456,7 +456,7 @@ export default function TransactionFormModal({
                   clients={clients}
                   categories={["seller"]}
                 />
-                {sellerHint && <div style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: 4 }}>{sellerHint}</div>}
+                {sellerHint && <div style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)", marginTop: 4 }}>{sellerHint}</div>}
               </div>
             )}
 
@@ -482,8 +482,8 @@ export default function TransactionFormModal({
                   />
                 }
               >
-                {buyerHint && <div style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: 6 }}>{buyerHint}</div>}
-                {splitHint && <div style={{ fontSize: "0.8rem", color: "#1d4ed8", marginTop: 4 }}>{splitHint}</div>}
+                {buyerHint && <div style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)", marginTop: 6 }}>{buyerHint}</div>}
+                {splitHint && <div style={{ fontSize: "0.8rem", color: "var(--color-info)", marginTop: 4 }}>{splitHint}</div>}
                 {!fromSellerFiche && !isRental && !buyerIsClient && (
                   <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
                     <input
@@ -502,7 +502,7 @@ export default function TransactionFormModal({
               <label style={labelStyle}>
                 Honoraires TTC de notre agence (€) *
                 <input style={fieldStyle} inputMode="decimal" value={draft.fees_ttc} onChange={(e) => set("fees_ttc", e.target.value)} />
-                <span style={{ fontWeight: 400, fontSize: "0.78rem", color: "#6b7280" }}>
+                <span style={{ fontWeight: 400, fontSize: "0.78rem", color: "var(--color-ink-muted)" }}>
                   {feesHt === null ? "" : `soit ${formatCurrency(feesHt)} HT (TVA ${vatRate} %) · `}
                   partage inter-agences : notre part uniquement
                 </span>
@@ -521,7 +521,7 @@ export default function TransactionFormModal({
               {showAdvanced ? "▾" : "▸"} Options avancées
             </button>
             {!showAdvanced && (
-              <span style={{ marginLeft: 10, fontSize: "0.82rem", color: participantErrors.length ? "#b91c1c" : "#6b7280" }}>
+              <span style={{ marginLeft: 10, fontSize: "0.82rem", color: participantErrors.length ? "var(--color-danger)" : "var(--color-ink-muted)" }}>
                 {participantsSummary || "Aucun participant"}
                 {draft.deductions.length > 0 && ` · ${draft.deductions.length} déduction(s)`}
               </span>
@@ -571,7 +571,7 @@ export default function TransactionFormModal({
               {draft.split_locked ? (
                 <div style={sectionStyle}>
                   <strong>Répartition entre négociateurs</strong>
-                  <p style={{ fontSize: "0.85rem", color: "#6b7280", margin: "4px 0 0" }}>
+                  <p style={{ fontSize: "0.85rem", color: "var(--color-ink-muted)", margin: "4px 0 0" }}>
                     La répartition ne peut être modifiée que par un administrateur.
                   </p>
                 </div>
@@ -622,7 +622,7 @@ export default function TransactionFormModal({
                       </button>
                     </div>
                   ))}
-                  <div style={{ marginTop: 8, fontSize: "0.88rem", fontWeight: 600, color: participantErrors.length ? "#b91c1c" : "#047857" }}>
+                  <div style={{ marginTop: 8, fontSize: "0.88rem", fontWeight: 600, color: participantErrors.length ? "var(--color-danger)" : "var(--color-success)" }}>
                     Total : {sharesTotal(numericParticipants)} %
                     {participantErrors.length > 0 && <span style={{ fontWeight: 400 }}> · {participantErrors.join(" ")}</span>}
                   </div>
@@ -632,7 +632,7 @@ export default function TransactionFormModal({
 
               <div style={sectionStyle}>
                 <strong>Déductions avant commission</strong>
-                <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: "4px 0 0" }}>
+                <p style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)", margin: "4px 0 0" }}>
                   Dépenses extérieures à l'activité de l'agence (ex. commission d'apporteur d'affaires), déduites des
                   honoraires HT avant le calcul des commissions des négociateurs.
                 </p>
@@ -642,7 +642,7 @@ export default function TransactionFormModal({
                       <strong>{d.label}</strong>
                       {d.beneficiary ? ` · ${d.beneficiary}` : ""} · {formatCurrency(d.amount_ht)} HT
                       <br />
-                      <span style={{ color: "#6b7280" }}>{d.reason}</span>
+                      <span style={{ color: "var(--color-ink-muted)" }}>{d.reason}</span>
                     </span>
                     <button
                       type="button"

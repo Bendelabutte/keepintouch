@@ -8,14 +8,14 @@ import { parseDecimal } from "../lib/transactionDraft";
 const fieldStyle = {
   width: "100%",
   padding: "9px 11px",
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--color-line-strong)",
   borderRadius: 10,
   fontSize: "0.92rem",
-  background: "#fff",
+  background: "var(--color-surface)",
   boxSizing: "border-box",
   marginTop: 4,
 };
-const labelStyle = { display: "block", fontSize: "0.85rem", fontWeight: 600, color: "#111827" };
+const labelStyle = { display: "block", fontSize: "0.85rem", fontWeight: 600, color: "var(--color-ink)" };
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginTop: 12 };
 const str = (v) => (v === null || v === undefined ? "" : String(v));
 
@@ -120,7 +120,7 @@ export default function CompensationSettingsModal({ target, onCancel, onSaved })
               <input type="date" style={fieldStyle} value={form.opening_balance_date} onChange={set("opening_balance_date")} />
             </label>
           </div>
-          <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: "6px 0 0" }}>
+          <p style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)", margin: "6px 0 0" }}>
             Solde dû par l'agence à cette date. Les ventes actées avant la date d'ouverture n'ouvrent pas de commission
             (elles sont comprises dans ce solde).
           </p>

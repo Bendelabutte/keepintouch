@@ -1,9 +1,22 @@
 // src/components/ReleaseNotesModal.jsx
 import React from "react";
+import { Button, Modal } from "./ui";
 
 // Nouveautés de la version en cours, à destination des commerciaux.
 // Version 4.0 : textes provisoires, à réécrire en fin de projet.
 const NOTES = [
+  {
+    title: "Nouvelle interface",
+    text: "un menu fixe (Clients, Transactions, Rémunération, Tableau de bord), de vraies adresses pour chaque page et le bouton Retour du navigateur qui fonctionne.",
+  },
+  {
+    title: "Créer une fiche par type",
+    text: "« Ajouter » propose Vendeur / estimation, Acquéreur ou Après-vente, avec seulement les champs utiles ; le reste est sous « Plus d’infos ».",
+  },
+  {
+    title: "Fiche vendeur par étapes",
+    text: "une frise Estimation → Sous mandat → Sous promesse → Vendu, et une section par étape (prix de mise en vente et honoraires prévus au mandat, repris à la promesse).",
+  },
   {
     title: "Dossiers clos",
     text: "une fiche close ne propose plus de relance ni d’action : un encadré résume la clôture (date, motif, vente, dates clés). Vous pouvez toujours y ajouter une note.",
@@ -67,46 +80,32 @@ const NOTES = [
 ];
 
 export default function ReleaseNotesModal({ version, show, onClosePermanently, onCloseTemporary }) {
-  if (!show) return null;
-
   return (
-    <div className="admin-modal-backdrop" onClick={onCloseTemporary}>
-      <div className="admin-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div>
-            <h2 style={{ marginBottom: 6 }}>Nouveautés de Keepintouch {version}</h2>
-            <p style={{ margin: 0, color: "#4b5563", lineHeight: 1.5 }}>
-              Moins de saisie, plus de suivi : voici ce qui change pour vous.
-            </p>
-          </div>
-
-          <div
-            style={{
-              border: "1px solid #e5e7eb",
-              borderRadius: 12,
-              padding: 14,
-              background: "#f9fafb",
-            }}
-          >
-            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8, lineHeight: 1.45 }}>
-              {NOTES.map((n) => (
-                <li key={n.title}>
-                  <strong>{n.title}</strong> : {n.text}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-            <button type="button" className="btn-outline" onClick={onCloseTemporary}>
-              Lire plus tard
-            </button>
-            <button type="button" className="btn-primary" onClick={onClosePermanently}>
-              J’ai lu
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <Modal
+      open={show}
+      size="md"
+      title={`Nouveautés de Keepintouch ${version}`}
+      description="Moins de saisie, plus de suivi : voici ce qui change pour vous."
+      onClose={onCloseTemporary}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCloseTemporary}>
+            Lire plus tard
+          </Button>
+          <Button onClick={onClosePermanently}>J’ai lu</Button>
+        </>
+      }
+    >
+      <ul className="space-y-3">
+        {NOTES.map((n) => (
+          <li key={n.title} className="flex gap-3 text-sm leading-relaxed">
+            <span aria-hidden="true" className="mt-1.5 size-2 shrink-0 rounded-full bg-accent" />
+            <span>
+              <strong className="text-ink">{n.title}</strong> <span className="text-ink-soft">: {n.text}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Modal>
   );
 }

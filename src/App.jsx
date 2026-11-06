@@ -1,7 +1,7 @@
 // src/App.jsx
 import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
-import { baseCss } from "./styles/baseCss";
+import { useLocation, useNavigate } from "react-router";
 import { addDaysToDate, todayStr as getTodayStr } from "./lib/dates";
 import { computeStats } from "./lib/stats";
 import {
@@ -10,10 +10,8 @@ import {
   settingsRowToRelanceConfig,
   relanceConfigToSettingsRow,
   relanceCfgForClient,
-  PHASE_LABELS,
   hasNoFollowUp,
   followUpForEdit,
-  normalizePhase,
   phaseChangeFollowUp,
   initialFollowUp,
 } from "./lib/relance";
@@ -30,24 +28,31 @@ import {
 import { isPendingPromise, pendingStats, transactionFeesHt } from "./lib/transactions";
 import { resolveAddressText } from "./lib/address";
 
-import Header from "./components/Header";
+import AppShell from "./components/AppShell";
 import DashboardCard from "./components/DashboardCard";
 import CompactRow from "./components/CompactRow";
 import ClientDetailCard from "./components/ClientDetailCard";
-import AdminModal from "./components/AdminModal";
-import ClientModal from "./components/ClientModal";
+import ClientCreatePage, { ClientEditModal } from "./components/ClientCreatePage";
+import ClientFichePage from "./components/ClientFichePage";
+import ClientsListView from "./components/ClientsListView";
+import MandateModal from "./components/MandateModal";
+import { Alert } from "./components/ui";
+import { PAGE_PATHS, clientPath, parseRoute, transactionPath } from "./lib/routes";
+import { mandatePotential, promiseInfoForSeller, promisePrefillFromMandate, reopenConfirmation } from "./lib/stages";
 import ClosureModal from "./components/ClosureModal";
-import ProfileModal from "./components/ProfileModal";
 import ReleaseNotesModal from "./components/ReleaseNotesModal";
-import TransactionFormModal from "./components/TransactionFormModal";
 import PromptModal from "./components/PromptModal";
-import CompensationSettingsModal from "./components/CompensationSettingsModal";
 import { projectedCompensation, projectionLabel } from "./lib/compensation";
 
 // recharts chargé à la demande (tableau de bord) : le reste de l'application n'en paie pas le poids.
 const DashboardChart = lazy(() => import("./components/DashboardChart"));
 const CompensationPage = lazy(() => import("./components/CompensationPage"));
 const TransactionsPage = lazy(() => import("./components/TransactionsPage"));
+// Fenêtres lourdes : chargées à la première ouverture
+const AdminModal = lazy(() => import("./components/AdminModal"));
+const ProfileModal = lazy(() => import("./components/ProfileModal"));
+const TransactionFormModal = lazy(() => import("./components/TransactionFormModal"));
+const CompensationSettingsModal = lazy(() => import("./components/CompensationSettingsModal"));
 
 function App() {
   // Auth / session
@@ -55,9 +60,15 @@ function App() {
   const [sessionLoading, setSessionLoading] = useState(true);
 
   // Page
-  const [page, setPage] = useState("clients");
+  // Page courante = adresse (react-router) : liens partageables, bouton Retour du navigateur
+  const location = useLocation();
+  const navigate = useNavigate();
+  const route = useMemo(() => parseRoute(location.pathname), [location.pathname]);
+  const page = route.page || "clients";
+  const setPage = (p) => navigate(PAGE_PATHS[p] || PAGE_PATHS.clients);
   // Transaction à ouvrir en arrivant sur la page Transactions (lien depuis une fiche vendue)
-  const [focusTransactionId, setFocusTransactionId] = useState(null);
+  const [mandateClient, setMandateClient] = useState(null);
+  const [clientFormError, setClientFormError] = useState("");
 
   // Flow reset mdp
   const [isResetFlow, setIsResetFlow] = useState(false);
@@ -66,7 +77,6 @@ function App() {
   const [resetErrorMsg, setResetErrorMsg] = useState("");
   const [resetDone, setResetDone] = useState(false);
 
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profileMsg, setProfileMsg] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
@@ -208,8 +218,12 @@ const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   );
 
   useEffect(() => {
-    document.title = "Keepintouch";
+    document.title = "Keepintouch · Rester en contact";
   }, []);
+
+  useEffect(() => {
+    if (route.page === null) navigate(PAGE_PATHS.clients, { replace: true });
+  }, [route.page, navigate]);
 
 
 // Nouveautés : affichées une fois par utilisateur et par version (profil, sinon localStorage).
@@ -268,13 +282,11 @@ useEffect(() => {
     return "Client";
   };
 
-  const pluralize = (n, singular, plural) => (n > 1 ? plural : singular);
 
   const addDays = (baseDate, days) => addDaysToDate(baseDate || new Date(), days);
 
   const getRelanceCfgForCategory = (category) => resolveRelanceCfg(relanceConfig, category);
 
-  const getSellerStageLabel = (c) => PHASE_LABELS[normalizePhase(c?.deal_stage)];
 
   const normalizeText = (v) =>
     String(v || "")
@@ -439,7 +451,9 @@ useEffect(() => {
         setLastError("Ton compte est désactivé. Contacte un administrateur.");
         try {
           await supabase.auth.signOut();
-        } catch (e) {}
+        } catch {
+          // déconnexion au mieux : la session locale est vidée juste après
+        }
         setSession(null);
       }
     } catch (err) {
@@ -778,15 +792,8 @@ useEffect(() => {
 
   // ---------- AJOUT / EDIT CLIENT ----------
 
-  const openAddModal = () => {
-    setEditingClientId(null);
-    setNewClient({
-      category:
-        currentTab === "acquereur"
-          ? "buyer"
-          : currentTab === "apresvente"
-          ? "after"
-          : "seller",
+  const blankClient = (category) => ({
+      category,
       seller_kind: "Vendeur",
       deal_stage: "pre_mandat",
       first_name: "",
@@ -810,10 +817,19 @@ useEffect(() => {
       after_address: "",
       client_birthday: "",
       context: "",
+      estimation_value: "",
+      rooms: "",
       manual_next_due_date: "",
-    });
-    setShowAddModal(true);
-  };
+  });
+
+  // Page /clients/nouveau/:type : formulaire vierge du type demandé
+  useEffect(() => {
+    if (route.view !== "create") return;
+    setEditingClientId(null);
+    setClientFormError("");
+    setNewClient(blankClient(route.createCategory));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.view, route.createCategory]);
 
   const openEditModal = (client) => {
   setEditingClientId(client.id);
@@ -842,9 +858,15 @@ useEffect(() => {
     after_address: client.after_address || "",
     client_birthday: client.client_birthday || "",
     context: client.context || "",
+    estimation_value: client.estimation_value ?? "",
+    listing_price: client.listing_price ?? "",
+    planned_fees_ttc: client.planned_fees_ttc ?? "",
+    mandate_type: client.mandate_type || "",
+    rooms: client.rooms ?? "",
     manual_next_due_date:
       client.next_due_date || client.next_followup_at || "",
   });
+  setClientFormError("");
   setShowAddModal(true);
 };
 
@@ -856,6 +878,14 @@ useEffect(() => {
   };
 
 
+  // Montant ou nombre saisi (« 350 000 », « 12,5 ») → nombre, vide ou invalide → null
+  const toAmount = (v) => {
+    const raw = String(v ?? "").replace(/\s/g, "").replace(",", ".");
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+
   const handleSaveClient = async (e) => {
   e.preventDefault();
   if (!session?.user?.id) {
@@ -863,23 +893,19 @@ useEffect(() => {
     return;
   }
 
-  if (!newClient.last_name.trim()) {
-    alert("Le nom du client est obligatoire.");
-    return;
-  }
-  if (!normalizePhone(newClient.phone)) {
-    alert("Le téléphone est obligatoire.");
-    return;
-  }
-  if (emailError(newClient.email)) {
-    alert(emailError(newClient.email));
-    return;
-  }
-  if (newClient.category === "seller" && !newClient.property_address.trim()) {
-    alert("L’adresse du bien est obligatoire pour un vendeur / bailleur.");
-    return;
-  }
+  const formError = !newClient.last_name.trim()
+    ? "Le nom du client est obligatoire."
+    : !normalizePhone(newClient.phone) && !normalizeEmail(newClient.email)
+    ? "Renseignez un téléphone ou un email."
+    : emailError(newClient.email)
+    ? emailError(newClient.email)
+    : newClient.category === "seller" && !String(newClient.property_address || "").trim()
+    ? "L’adresse du bien est obligatoire pour un vendeur / bailleur."
+    : "";
+  setClientFormError(formError);
+  if (formError) return;
 
+  let createdId = null;
   try {
     setIsLoading(true);
     setLastError("");
@@ -911,7 +937,9 @@ useEffect(() => {
       also_owner: newClient.category === "buyer" ? !!newClient.also_owner : false,
       after_address: newClient.category === "after" ? newClient.after_address || null : null,
       client_birthday: newClient.category === "after" ? newClient.client_birthday || null : null,
-      context: newClient.category === "after" ? newClient.context || null : null,
+      context: newClient.category !== "seller" ? newClient.context || null : null,
+      estimation_value: newClient.category === "seller" ? toAmount(newClient.estimation_value) : null,
+      rooms: newClient.category === "buyer" ? toAmount(newClient.rooms) : null,
       next_due_date: chosenNext,
             next_due_source: (() => {
         if (!newClient.manual_next_due_date) return "auto";
@@ -927,6 +955,17 @@ useEffect(() => {
         return "manual";
       })(),
     };
+
+    if (newClient.category === "after" && newClient.created_at) {
+      // Date d'achat (après-vente) : aussi date de vente de référence
+      payload.sale_completed_at = newClient.created_at;
+    }
+
+    if (editingClientId && newClient.category === "seller") {
+      payload.listing_price = toAmount(newClient.listing_price);
+      payload.planned_fees_ttc = toAmount(newClient.planned_fees_ttc);
+      payload.mandate_type = newClient.mandate_type || null;
+    }
 
     if (newClient.category === "seller" && (newClient.seller_kind || "").trim()) {
       payload.seller_kind = newClient.seller_kind.trim();
@@ -995,18 +1034,20 @@ useEffect(() => {
             : null,
       };
 
-      const { error } = await supabase.from("clients").insert(insertPayload);
+      const { data: created, error } = await supabase.from("clients").insert(insertPayload).select("id").single();
       if (error) throw error;
+      createdId = created?.id || null;
     }
 
     setShowAddModal(false);
     setEditingClientId(null);
     await fetchClientsFromDb();
     await fetchCommentsFromDb();
+    // Création : on arrive sur la fiche créée
+    if (createdId) navigate(clientPath(createdId));
   } catch (err) {
     console.error("Erreur sauvegarde client", err);
-    setLastError(err.message || "Erreur création / modification client");
-    alert("Erreur lors de la sauvegarde du client : " + (err.message || "voir console (F12)"));
+    setClientFormError("Enregistrement impossible : " + (err.message || "voir la console (F12)."));
   } finally {
     setIsLoading(false);
   }
@@ -1056,24 +1097,19 @@ useEffect(() => {
 
   // « Passer sous mandat » : un clic. La prochaine relance (aujourd'hui + délai vendeur) et le
   // commentaire « Phase : Sous mandat » sont posés en base par les triggers de changement de phase.
-  const handlePassMandat = async (client) => {
-    try {
-      setIsLoading(true);
-      const payload = { deal_stage: "mandat" };
-      if (!client.mandat_at) payload.mandat_at = new Date().toISOString();
+  const handlePassMandat = (client) => setMandateClient(client);
 
-      const { data, error } = await supabase.from("clients").update(payload).eq("id", client.id).select("id");
-      if (error) throw error;
-      if (!data || data.length === 0) throw new Error("aucune ligne modifiée (droits insuffisants ?)");
+  const confirmPassMandat = async (client, mandate) => {
+    const payload = { deal_stage: "mandat", ...mandate };
+    if (!client.mandat_at) payload.mandat_at = new Date().toISOString();
 
-      await fetchClientsFromDb();
-      await fetchCommentsFromDb();
-    } catch (err) {
-      console.error("Erreur passage sous mandat", err);
-      alert("Erreur lors du passage sous mandat : " + (err.message || "voir console (F12)"));
-    } finally {
-      setIsLoading(false);
-    }
+    const { data, error } = await supabase.from("clients").update(payload).eq("id", client.id).select("id");
+    if (error) throw error;
+    if (!data || data.length === 0) throw new Error("Aucune ligne modifiée (droits insuffisants ?)");
+
+    setMandateClient(null);
+    await fetchClientsFromDb();
+    await fetchCommentsFromDb();
   };
 
   // ---------- COMMENTAIRES / RELANCES ----------
@@ -1229,18 +1265,24 @@ useEffect(() => {
 
   // Admin : rouvrir un dossier clos par erreur (motif obligatoire, relance recalculée en base).
   const openReopenClient = (client) => {
+    const sale = reopenConfirmation(client, transactions, { formatDate, formatCurrency });
     setPrompt({
       title: "Rouvrir le dossier",
       text: "Réservé à la correction d’une erreur. La fiche redevient active et la prochaine relance est recalculée selon sa phase.",
+      warning: sale.text,
       label: "Motif",
       type: "textarea",
-      confirmLabel: "Rouvrir le dossier",
+      danger: !!sale.transaction,
+      confirmLabel: sale.transaction ? "Annuler la vente et rouvrir" : "Rouvrir le dossier",
       onConfirm: async (reason) => {
-        const { error } = await supabase.rpc("reopen_client", { p_client_id: client.id, p_reason: reason });
+        const { error } = await supabase.rpc("reopen_client", {
+          p_client_id: client.id,
+          p_reason: reason,
+          p_cancel_sale: !!sale.transaction,
+        });
         if (error) throw error;
         setPrompt(null);
-        await fetchClientsFromDb();
-        await fetchCommentsFromDb();
+        await reloadAfterTransaction();
       },
     });
   };
@@ -1279,7 +1321,7 @@ useEffect(() => {
     draft.seller_client_id = client.id;
     draft.date_kind = "promise";
     draft.date = getTodayStr();
-    setTransactionForm({ mode: "promise", draft, seller: client });
+    setTransactionForm({ mode: "promise", draft: promisePrefillFromMandate(draft, client), seller: client });
   };
 
   // « Acte signé » / « Marquer comme vendue » : seule la date de l'acte est demandée.
@@ -1565,24 +1607,13 @@ useEffect(() => {
 
   // ---------- TITRES / SECTIONS ----------
 
-  const statusSuffix = useMemo(() => {
-    if (statusFilter === "arelancer") return "à relancer";
-    if (statusFilter === "clos") return "clos";
-    return "";
-  }, [statusFilter]);
-
-  const sellerTitle = "Vendeur / Bailleur & Estimation";
-  const buyerTitle = "Acquéreur";
+  const sellerTitle = "Vendeurs / bailleurs & estimations";
+  const buyerTitle = "Acquéreurs";
   const afterTitle = "Après-vente";
 
   const sellers = useMemo(() => clients.filter((c) => c.category === "seller"), [clients]);
   const buyers = useMemo(() => clients.filter((c) => c.category === "buyer"), [clients]);
   const afters = useMemo(() => clients.filter((c) => c.category === "after"), [clients]);
-
-  const makeSectionTitle = (base, count) => {
-    const sfx = statusSuffix ? ` ${statusSuffix}` : "";
-    return `${base} : ${count} ${pluralize(count, "client", "clients")}${sfx}`;
-  };
 
   const emptyTextForCategory = (catKey) => {
     const base =
@@ -1607,8 +1638,6 @@ useEffect(() => {
     return sorted[0]?.created_at || null;
   };
 
-  const isMobileView =
-    typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
 
   // Fiche vendue : transaction encaissée et fiche après-vente de l'acquéreur.
   const soldInfoFor = (c) => {
@@ -1640,21 +1669,15 @@ useEffect(() => {
     return dates[dates.length - 1] || null;
   };
 
-  const openClientFiche = (client) => {
-    setPage("clients");
-    setCurrentTab(client.category === "after" ? "apresvente" : client.category === "buyer" ? "acquereur" : "vendeur");
-    setStatusFilter(client.status === "closed" ? "clos" : "tous");
-    setSearchTerm([client.first_name, client.last_name].filter(Boolean).join(" "));
-  };
+  const openClientFiche = (client) => navigate(clientPath(client.id));
 
-  const openTransaction = (id) => {
-    setFocusTransactionId(id);
-    setPage("transactions");
-  };
+  const openTransaction = (id) => navigate(transactionPath(id));
 
-  const renderClientDetailCard = (c) => (
+  const renderClientDetailCard = (c, variant = "inline") => (
     <ClientDetailCard
       c={c}
+      variant={variant}
+      promiseInfo={c.category === "seller" ? promiseInfoForSeller(c, transactions) : null}
       isAdmin={isAdmin}
       isManager={isManager}
       getCommercialEmail={getCommercialEmail}
@@ -1670,7 +1693,6 @@ useEffect(() => {
       handleValidateRelance={handleValidateRelance}
       openEditModal={openEditModal}
       openClosureModal={openClosureModal}
-      getSellerStageLabel={getSellerStageLabel}
       onPassMandat={handlePassMandat}
       onPromise={openPromiseForm}
       soldInfo={soldInfoFor(c)}
@@ -1685,37 +1707,35 @@ useEffect(() => {
     />
   );
 
-  const renderClientsBlock = (list, sectionTitle, catKey) => {
-    if (isLoading) return <p>Chargement…</p>;
-    if (list.length === 0) return <p>{emptyTextForCategory(catKey)}</p>;
+  const renderClientRow = (c) => (
+    <CompactRow
+      key={c.id}
+      client={c}
+      isAdmin={isAdmin}
+      isManager={isManager}
+      expandedClientId={expandedClientId}
+      setExpandedClientId={setExpandedClientId}
+      getCommercialEmail={getCommercialEmail}
+      getFollowupInfo={getFollowupInfo}
+      getNextDueDate={getNextDueDate}
+      formatDate={formatDate}
+      getLastRelanceDate={getLastRelanceDate}
+      renderClientDetailCard={renderClientDetailCard}
+    />
+  );
 
-    return (
-      <>
-        <h2 className="section-title">{sectionTitle}</h2>
-
-        <div className="compact-list">
-            {list.map((c) => (
-              <div key={c.id}>
-                <CompactRow
-                  client={c}
-                  isAdmin={isAdmin}
-                  isManager={isManager}
-                  expandedClientId={expandedClientId}
-                  setExpandedClientId={setExpandedClientId}
-                  getCommercialEmail={getCommercialEmail}
-                  getFollowupInfo={getFollowupInfo}
-                  getNextDueDate={getNextDueDate}
-                  formatDate={formatDate}
-                  getLastRelanceDate={getLastRelanceDate}
-                  renderClientDetailCard={renderClientDetailCard}
-                  getSellerStageLabel={getSellerStageLabel}
-                />
-              </div>
-            ))}
-          </div>
-      </>
-    );
-  };
+  const clientSections =
+    currentTab === "tous"
+      ? [
+          { key: "seller", title: sellerTitle, list: sellers, emptyText: emptyTextForCategory("seller") },
+          { key: "buyer", title: buyerTitle, list: buyers, emptyText: emptyTextForCategory("buyer") },
+          { key: "after", title: afterTitle, list: afters, emptyText: emptyTextForCategory("after") },
+        ]
+      : currentTab === "acquereur"
+      ? [{ key: "buyer", title: buyerTitle, list: buyers, emptyText: emptyTextForCategory("buyer") }]
+      : currentTab === "apresvente"
+      ? [{ key: "after", title: afterTitle, list: afters, emptyText: emptyTextForCategory("after") }]
+      : [{ key: "seller", title: sellerTitle, list: sellers, emptyText: emptyTextForCategory("seller") }];
 
   // ---------- ADMIN ----------
 
@@ -2252,6 +2272,17 @@ useEffect(() => {
     [dashboardClientsRaw, today0, transactions, dashboardCaUserIds]
   );
 
+  const dashboardMandatePotential = useMemo(
+    () =>
+      mandatePotential(
+        dashboardCommercialFilter === "Tous"
+          ? clientsRaw
+          : clientsRaw.filter((c) => getCommercialEmail(c.owner_id) === dashboardCommercialFilter)
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [clientsRaw, dashboardCommercialFilter, profilesMap]
+  );
+
   const myProjection = useMemo(
     () => projectedCompensation(transactions, session?.user?.id, mySettings),
     [transactions, session, mySettings]
@@ -2353,7 +2384,6 @@ const handleCloseReleaseNotesTemporary = () => {
   if (sessionLoading) {
     return (
       <div className="app">
-        <style>{baseCss}</style>
         <div className="app-center">Chargement de la session…</div>
       </div>
     );
@@ -2362,7 +2392,6 @@ const handleCloseReleaseNotesTemporary = () => {
   if (isResetFlow && session) {
     return (
       <div className="app auth-screen">
-        <style>{baseCss}</style>
         <div className="auth-card">
           <h1>Keepintouch</h1>
           <span className="badge">Rester en contact</span>
@@ -2382,7 +2411,7 @@ const handleCloseReleaseNotesTemporary = () => {
 
             {resetErrorMsg && <p className="error-text">{resetErrorMsg}</p>}
             {resetDone && (
-              <p style={{ fontSize: "0.85rem", color: "#15803d" }}>
+              <p style={{ fontSize: "0.85rem", color: "var(--color-success)" }}>
                 Mot de passe mis à jour avec succès.
               </p>
             )}
@@ -2399,7 +2428,6 @@ const handleCloseReleaseNotesTemporary = () => {
   if (isInviteFlow && session) {
     return (
       <div className="app auth-screen">
-        <style>{baseCss}</style>
         <div className="auth-card">
           <h1>Keepintouch</h1>
           <span className="badge">Rester en contact</span>
@@ -2408,7 +2436,7 @@ const handleCloseReleaseNotesTemporary = () => {
           <p
             style={{
               fontSize: "0.9rem",
-              color: "#4b5563",
+              color: "var(--color-ink-muted)",
               marginTop: 0,
               lineHeight: 1.4,
             }}
@@ -2471,7 +2499,7 @@ const handleCloseReleaseNotesTemporary = () => {
 
             {resetErrorMsg && <p className="error-text">{resetErrorMsg}</p>}
             {resetDone && (
-              <p style={{ fontSize: "0.85rem", color: "#15803d" }}>
+              <p style={{ fontSize: "0.85rem", color: "var(--color-success)" }}>
                 Compte finalisé avec succès.
               </p>
             )}
@@ -2488,13 +2516,12 @@ const handleCloseReleaseNotesTemporary = () => {
   if (isInviteFlow && !session) {
     return (
       <div className="app auth-screen">
-        <style>{baseCss}</style>
         <div className="auth-card">
           <h1>Keepintouch</h1>
           <span className="badge">Rester en contact</span>
 
           <h2>Activation de votre accès…</h2>
-          <p style={{ fontSize: "0.9rem", color: "#4b5563", marginTop: 0 }}>
+          <p style={{ fontSize: "0.9rem", color: "var(--color-ink-muted)", marginTop: 0 }}>
             Merci de patienter quelques secondes pendant la validation de votre invitation.
           </p>
         </div>
@@ -2505,7 +2532,6 @@ const handleCloseReleaseNotesTemporary = () => {
   if (!session) {
     return (
       <div className="app auth-screen">
-        <style>{baseCss}</style>
         <div className="auth-card">
           <h1>Keepintouch</h1>
           <span className="badge">Rester en contact</span>
@@ -2565,26 +2591,19 @@ const handleCloseReleaseNotesTemporary = () => {
   }
 
   return (
-    <div className="app">
-      <style>{baseCss}</style>
-
-      <Header
-        session={session}
+    <>
+      <AppShell
+        version={RELEASE_NOTES_VERSION}
+        profile={currentProfile}
+        email={session.user.email}
         isAdmin={isAdmin}
-        isManager={isManager}
-        page={page}
-        setPage={setPage}
-        setShowAdminPanel={setShowAdminPanel}
-        handleLogout={handleLogout}
-        currentProfile={currentProfile}
-        showProfileMenu={showProfileMenu}
-        setShowProfileMenu={setShowProfileMenu}
-        setShowProfileModal={setShowProfileModal}
-        onShowReleaseNotes={() => setShowReleaseNotes(true)}
-      />
+        onProfile={() => setShowProfileModal(true)}
+        onSettings={() => setShowAdminPanel(true)}
+        onNews={() => setShowReleaseNotes(true)}
+        onLogout={handleLogout}
+      >
 
-      <main className="main" style={page === "transactions" ? { maxWidth: "none" } : undefined}>
-        {settingsError && <p className="error-text">{settingsError}</p>}
+        {settingsError && <Alert className="mb-4">{settingsError}</Alert>}
         {page === "remuneration" ? (
           <Suspense fallback={<p>Chargement…</p>}>
           <CompensationPage
@@ -2606,8 +2625,7 @@ const handleCloseReleaseNotesTemporary = () => {
             loadError={transactionsError}
             onReload={reloadAfterTransaction}
             managedUserIds={managedUserIds}
-            focusTransactionId={focusTransactionId}
-            onFocusHandled={() => setFocusTransactionId(null)}
+            detailId={route.transactionId}
             onSignSale={openSignSale}
             onCancel={(tx) => openCancelTransaction(tx)}
             isAdmin={isAdmin}
@@ -2637,7 +2655,7 @@ const handleCloseReleaseNotesTemporary = () => {
                 <h2 className="dash-page-title" style={{ marginBottom: 4 }}>
                   Tableau de bord
                 </h2>
-                <div style={{ fontSize: "0.92rem", color: "#4b5563" }}>
+                <div style={{ fontSize: "0.92rem", color: "var(--color-ink-muted)" }}>
                   {dashboardCommercialDisplay || "Vue commerciale"}
                 </div>
               </div>
@@ -2663,8 +2681,8 @@ const handleCloseReleaseNotesTemporary = () => {
                       minWidth: 220,
                       padding: "8px 10px",
                       borderRadius: 10,
-                      border: "1px solid #d1d5db",
-                      background: "#fff",
+                      border: "1px solid var(--color-line-strong)",
+                      background: "var(--color-surface)",
                     }}
                   >
                     <option value="Tous">Tous</option>
@@ -2867,6 +2885,17 @@ const handleCloseReleaseNotesTemporary = () => {
                 </div>
               )}
 
+              {isAdmin && (
+                <div className="conversion-card">
+                  <div className="conversion-card-title">Potentiel sous mandat</div>
+                  <div className="conversion-card-value">{formatCurrency(dashboardMandatePotential.feesTtc)}</div>
+                  <div className="conversion-card-meta">
+                    {dashboardMandatePotential.count} mandat(s) en cours · {dashboardMandatePotential.withFees} chiffré(s)
+                  </div>
+                  <div className="conversion-card-sub">Honoraires prévus TTC des fiches sous mandat.</div>
+                </div>
+              )}
+
             </div>
 
             <Suspense fallback={<div className="dash-chart-card conversion-card-sub">Chargement du graphique…</div>}>
@@ -2886,9 +2915,9 @@ const handleCloseReleaseNotesTemporary = () => {
                 <div
                   style={{
                     marginTop: 26,
-                    border: "1px solid #e5e7eb",
+                    border: "1px solid var(--color-line)",
                     borderRadius: 16,
-                    background: "#fff",
+                    background: "var(--color-surface)",
                     padding: 16,
                   }}
                 >
@@ -2919,7 +2948,7 @@ const handleCloseReleaseNotesTemporary = () => {
                       }}
                     >
                       <thead>
-                        <tr style={{ background: "#f9fafb" }}>
+                        <tr style={{ background: "var(--color-subtle)" }}>
                          {[
   { key: "commercial", label: <>Commercial</> },
   { key: "active", label: <>Clients<br />actifs</>, secondary: true },
@@ -2938,7 +2967,7 @@ const handleCloseReleaseNotesTemporary = () => {
     style={{
       textAlign: "left",
       padding: "8px 10px",
-      borderBottom: "1px solid #e5e7eb",
+      borderBottom: "1px solid var(--color-line)",
       whiteSpace: "normal",
       lineHeight: 1.15,
       verticalAlign: "bottom",
@@ -2954,13 +2983,13 @@ const handleCloseReleaseNotesTemporary = () => {
                           <tr
   key={row.id}
   style={{
-    background: idx % 2 === 0 ? "#fff" : "#fcfcfd",
+    background: idx % 2 === 0 ? "var(--color-surface)" : "var(--color-surface)",
   }}
 >
   <td
     style={{
       padding: "8px 10px",
-      borderBottom: "1px solid #f1f5f9",
+      borderBottom: "1px solid var(--color-line)",
       fontWeight: 600,
       maxWidth: 180,
       whiteSpace: "nowrap",
@@ -2971,46 +3000,46 @@ const handleCloseReleaseNotesTemporary = () => {
   >
     {row.label}
   </td>
-  <td className="cmp-secondary" style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
+  <td className="cmp-secondary" style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
     {row.activeCount}
   </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
+  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
     {row.estimations}
   </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
+  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
     {row.mandats}
   </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
+  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
     {row.ventes}
   </td>
   <td
-    style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}
+    style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}
     title={`${row.mandatsFromEstimations} mandat(s) sur ${row.estimations} estimation(s) matures`}
   >
     {formatPercent(row.txEstimationMandat)}
   </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
+  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
     {formatPercent(row.txMandatVente)}
   </td>
   <td
     style={{
       padding: "8px 10px",
-      borderBottom: "1px solid #f1f5f9",
+      borderBottom: "1px solid var(--color-line)",
       fontWeight: 600,
       whiteSpace: "nowrap",
     }}
   >
     {formatCurrency(row.caHt)}
   </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
+  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
     {row.dueCount}
   </td>
   <td
     className="cmp-secondary"
     style={{
       padding: "8px 10px",
-      borderBottom: "1px solid #f1f5f9",
-      color: row.late2Count > 0 ? "#b91c1c" : "#111827",
+      borderBottom: "1px solid var(--color-line)",
+      color: row.late2Count > 0 ? "var(--color-danger)" : "var(--color-ink)",
       fontWeight: row.late2Count > 0 ? 700 : 400,
     }}
   >
@@ -3026,13 +3055,13 @@ const handleCloseReleaseNotesTemporary = () => {
                     {comparisonRows.map((row) => (
                       <div
                         key={row.id}
-                        style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, fontSize: "0.88rem" }}
+                        style={{ border: "1px solid var(--color-line)", borderRadius: 12, padding: 12, fontSize: "0.88rem" }}
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                           <strong>{row.label}</strong>
                           <strong>{formatCurrency(row.caHt)}</strong>
                         </div>
-                        <div style={{ color: "#4b5563", marginTop: 6, lineHeight: 1.5 }}>
+                        <div style={{ color: "var(--color-ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
                           {row.activeCount} actifs · {row.estimations} estim. · {row.mandats} mandats ·{" "}
                           {row.ventes} ventes
                           <br />
@@ -3041,7 +3070,7 @@ const handleCloseReleaseNotesTemporary = () => {
                           <br />
                           À relancer {row.dueCount}
                           {row.late2Count > 0 && (
-                            <span style={{ color: "#b91c1c", fontWeight: 700 }}> · {row.late2Count} en retard</span>
+                            <span style={{ color: "var(--color-danger)", fontWeight: 700 }}> · {row.late2Count} en retard</span>
                           )}
                         </div>
                       </div>
@@ -3052,9 +3081,9 @@ const handleCloseReleaseNotesTemporary = () => {
                 <div
                   style={{
                     marginTop: 18,
-                    border: "1px solid #e5e7eb",
+                    border: "1px solid var(--color-line)",
                     borderRadius: 16,
-                    background: "#fff",
+                    background: "var(--color-surface)",
                     padding: 16,
                   }}
                 >
@@ -3069,7 +3098,7 @@ const handleCloseReleaseNotesTemporary = () => {
                   </div>
 
                   {comparisonRows.length === 0 ? (
-                    <div style={{ color: "#6b7280" }}>Aucune donnée disponible.</div>
+                    <div style={{ color: "var(--color-ink-muted)" }}>Aucune donnée disponible.</div>
                   ) : (
                     <div
                       style={{
@@ -3108,7 +3137,7 @@ const handleCloseReleaseNotesTemporary = () => {
                               style={{
                                 width: "100%",
                                 height: 18,
-                                background: "#eef2f7",
+                                background: "var(--color-subtle)",
                                 borderRadius: 999,
                                 overflow: "hidden",
                               }}
@@ -3117,7 +3146,7 @@ const handleCloseReleaseNotesTemporary = () => {
                                 style={{
                                   width: `${ratio}%`,
                                   height: "100%",
-                                  background: "#111827",
+                                  background: "var(--color-ink)",
                                   borderRadius: 999,
                                 }}
                               />
@@ -3142,174 +3171,50 @@ const handleCloseReleaseNotesTemporary = () => {
               </>
             )}
           </>
+        ) : route.view === "create" ? (
+          <ClientCreatePage
+            values={newClient}
+            onChange={handleNewClientChange}
+            onSubmit={handleSaveClient}
+            busy={isLoading}
+            error={clientFormError}
+          />
+        ) : route.view === "fiche" ? (
+          <ClientFichePage
+            client={clientsRaw.find((c) => c.id === route.clientId) || null}
+            loading={isLoading || clientsRaw.length === 0}
+            humanCategory={humanCategory}
+            ownerLabel={isAdmin || isManager ? getCommercialLabel(clientsRaw.find((c) => c.id === route.clientId)?.owner_id) : ""}
+            renderDetail={(c) => renderClientDetailCard(c, "page")}
+          />
         ) : (
-          <>
-            <div className="top-bar">
-              <div className="tabs">
-                <button
-                  className={"tab-button" + (currentTab === "vendeur" ? " tab-button-active" : "")}
-                  onClick={() => setCurrentTab("vendeur")}
-                >
-                  {isMobileView ? "Vendeur" : "Vendeur/Bailleur"}
-                </button>
-                <button
-                  className={
-                    "tab-button" + (currentTab === "acquereur" ? " tab-button-active" : "")
-                  }
-                  onClick={() => setCurrentTab("acquereur")}
-                >
-                  Acquéreur
-                </button>
-                <button
-                  className={
-                    "tab-button" + (currentTab === "apresvente" ? " tab-button-active" : "")
-                  }
-                  onClick={() => setCurrentTab("apresvente")}
-                >
-                  {isMobileView ? "Après" : "Après-vente"}
-                </button>
-                <button
-                  className={"tab-button" + (currentTab === "tous" ? " tab-button-active" : "")}
-                  onClick={() => setCurrentTab("tous")}
-                >
-                  {isMobileView ? "Tous" : "Tous les types"}
-                </button>
-              </div>
-
-              <div className="status-tabs">
-                {STATUS_FILTERS.map((sf) => (
-                  <button
-                    key={sf.key}
-                    type="button"
-                    className={"status-button" + (statusFilter === sf.key ? " status-button-active" : "")}
-                    onClick={() => setStatusFilter(sf.key)}
-                  >
-                    {sf.label} <span className="status-count">{statusCounts[sf.key] ?? 0}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {currentTab === "vendeur" && (
-              <div className="filters-row" style={{ marginTop: -6 }}>
-                <div className="tabs">
-                  <button
-                    className={
-                      "tab-button" + (sellerStageFilter === "premandat" ? " tab-button-active" : "")
-                    }
-                    onClick={() => setSellerStageFilter("premandat")}
-                    type="button"
-                  >
-                    Pré-mandat
-                  </button>
-                  <button
-                    className={
-                      "tab-button" + (sellerStageFilter === "mandat" ? " tab-button-active" : "")
-                    }
-                    onClick={() => setSellerStageFilter("mandat")}
-                    type="button"
-                  >
-                    Sous mandat
-                  </button>
-                  <button
-                    className={
-                      "tab-button" + (sellerStageFilter === "souspromesse" ? " tab-button-active" : "")
-                    }
-                    onClick={() => setSellerStageFilter("souspromesse")}
-                    type="button"
-                  >
-                    Sous promesse
-                  </button>
-                  <button
-                    className={
-                      "tab-button" + (sellerStageFilter === "vendu" ? " tab-button-active" : "")
-                    }
-                    onClick={() => {
-                      setSellerStageFilter("vendu");
-                      setStatusFilter("clos");
-                    }}
-                    type="button"
-                  >
-                    Vendu
-                  </button>
-                  <button
-                    className={
-                      "tab-button" + (sellerStageFilter === "tous" ? " tab-button-active" : "")
-                    }
-                    onClick={() => setSellerStageFilter("tous")}
-                    type="button"
-                  >
-                    Tout
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="filters-row">
-              {(isAdmin || isManager) && (
-                <div className="filter-group">
-                  <label htmlFor="commercialFilter">Filtrer par commercial :</label>
-                  <select
-                    id="commercialFilter"
-                    value={commercialFilter}
-                    onChange={(e) => setCommercialFilter(e.target.value)}
-                  >
-                    <option value="Tous">Tous</option>
-
-                    {isAdmin &&
-                      commercials.map((c) => (
-                        <option key={c.id} value={c.email}>
-                          {c.email}
-                        </option>
-                      ))}
-
-                    {isManager &&
-                      commercials
-                        .filter((p) => p.id === session.user.id || managedUserIds.includes(p.id))
-                        .map((c) => (
-                          <option key={c.id} value={c.email}>
-                            {c.email}
-                          </option>
-                        ))}
-                  </select>
-                </div>
-              )}
-
-              <div className="search-box">
-                <input
-                  type="text"
-                  className="search-input"
-                  placeholder="Rechercher : nom, prénom, adresse, email, téléphone"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-
-              <button className="btn-primary" onClick={openAddModal} type="button">
-                + Ajouter
-              </button>
-            </div>
-
-            {lastError && <p className="error-text">Erreur : {lastError}</p>}
-
-            {currentTab === "tous" ? (
-              <>
-                {renderClientsBlock(sellers, makeSectionTitle(sellerTitle, sellers.length), "seller")}
-                {renderClientsBlock(buyers, makeSectionTitle(buyerTitle, buyers.length), "buyer")}
-                {renderClientsBlock(afters, makeSectionTitle(afterTitle, afters.length), "after")}
-              </>
-            ) : currentTab === "vendeur" ? (
-              renderClientsBlock(sellers, makeSectionTitle(sellerTitle, sellers.length), "seller")
-            ) : currentTab === "acquereur" ? (
-              renderClientsBlock(buyers, makeSectionTitle(buyerTitle, buyers.length), "buyer")
-            ) : (
-              renderClientsBlock(afters, makeSectionTitle(afterTitle, afters.length), "after")
-            )}
-
-            <footer className="app-footer">© Benjamin Rondreux — Keepintouch {RELEASE_NOTES_VERSION} — 2026</footer>
-          </>
+          <ClientsListView
+            currentTab={currentTab}
+            setCurrentTab={setCurrentTab}
+            sellerStageFilter={sellerStageFilter}
+            onSellerStageChange={(key) => {
+              setSellerStageFilter(key);
+              // Phase « Vendu » : fiches toutes closes
+              if (key === "vendu") setStatusFilter("clos");
+            }}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            statusCounts={statusCounts}
+            showCommercialFilter={isAdmin || isManager}
+            commercialFilter={commercialFilter}
+            setCommercialFilter={setCommercialFilter}
+            commercialOptions={
+              isAdmin ? commercials : commercials.filter((p) => p.id === session.user.id || managedUserIds.includes(p.id))
+            }
+            searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
+            sections={clientSections}
+            renderRow={renderClientRow}
+            loading={isLoading && clientsRaw.length === 0}
+            error={lastError ? `Erreur : ${lastError}` : ""}
+          />
         )}
-      </main>
+      </AppShell>
 
 <ReleaseNotesModal
   version={RELEASE_NOTES_VERSION}
@@ -3318,6 +3223,8 @@ const handleCloseReleaseNotesTemporary = () => {
   onCloseTemporary={handleCloseReleaseNotesTemporary}
 />
 
+      <Suspense fallback={null}>
+      {showAdminPanel && (
       <AdminModal
         isAdmin={isAdmin}
         session={session}
@@ -3346,16 +3253,22 @@ const handleCloseReleaseNotesTemporary = () => {
         saveAdminSettings={saveAdminSettings}
         onOpenCompensation={openCompensationSettings}
       />
+      )}
 
-      <ClientModal
-        showAddModal={showAddModal}
-        setShowAddModal={setShowAddModal}
-        editingClientId={editingClientId}
-        setEditingClientId={setEditingClientId}
-        newClient={newClient}
-        handleNewClientChange={handleNewClientChange}
-        handleSaveClient={handleSaveClient}
+      <ClientEditModal
+        open={showAddModal && !!editingClientId}
+        values={newClient}
+        onChange={handleNewClientChange}
+        onSubmit={handleSaveClient}
+        onClose={() => {
+          setShowAddModal(false);
+          setEditingClientId(null);
+        }}
+        busy={isLoading}
+        error={clientFormError}
       />
+
+      <MandateModal client={mandateClient} onCancel={() => setMandateClient(null)} onConfirm={confirmPassMandat} />
 
       <ClosureModal
         closureClient={closureClient}
@@ -3368,6 +3281,7 @@ const handleCloseReleaseNotesTemporary = () => {
 
       <PromptModal prompt={prompt} onCancel={() => setPrompt(null)} />
 
+      {transactionForm && (
       <TransactionFormModal
         open={!!transactionForm}
         mode={transactionForm?.mode}
@@ -3389,7 +3303,9 @@ const handleCloseReleaseNotesTemporary = () => {
         onCancel={() => setTransactionForm(null)}
         onSubmit={handleSubmitTransaction}
       />
+      )}
 
+      {compensationTarget && (
       <CompensationSettingsModal
         target={compensationTarget}
         onCancel={() => setCompensationTarget(null)}
@@ -3398,7 +3314,9 @@ const handleCloseReleaseNotesTemporary = () => {
           fetchMySettings();
         }}
       />
+      )}
 
+      {showProfileModal && (
       <ProfileModal
         showProfileModal={showProfileModal}
         setShowProfileModal={setShowProfileModal}
@@ -3412,7 +3330,9 @@ const handleCloseReleaseNotesTemporary = () => {
         profileBusy={profileBusy}
         currentProfile={currentProfile}
       />
-    </div>
+      )}
+      </Suspense>
+    </>
   );
 }
 

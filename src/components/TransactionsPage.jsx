@@ -1,6 +1,8 @@
 // src/components/TransactionsPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import { supabase } from "../supabaseClient";
+import { transactionPath } from "../lib/routes";
 import { parseDateStr } from "../lib/dates";
 import {
   PROPERTY_TYPE_LABELS,
@@ -24,15 +26,15 @@ import {
 } from "../lib/transactions";
 import { DeductionAddForm, FeesBreakdown } from "./TransactionFormModal";
 
-const cell = { padding: "8px 10px", borderBottom: "1px solid #f1f5f9", verticalAlign: "top", fontSize: "0.86rem" };
-const head = { ...cell, fontWeight: 700, background: "#f9fafb", whiteSpace: "nowrap", textAlign: "left" };
-const sub = { fontSize: "0.76rem", color: "#6b7280", fontWeight: 400 };
+const cell = { padding: "8px 10px", borderBottom: "1px solid var(--color-line)", verticalAlign: "top", fontSize: "0.86rem" };
+const head = { ...cell, fontWeight: 700, background: "var(--color-subtle)", whiteSpace: "nowrap", textAlign: "left" };
+const sub = { fontSize: "0.76rem", color: "var(--color-ink-muted)", fontWeight: 400 };
 const fieldStyle = {
   padding: "8px 10px",
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--color-line-strong)",
   borderRadius: 10,
   fontSize: "0.9rem",
-  background: "#fff",
+  background: "var(--color-surface)",
   boxSizing: "border-box",
 };
 
@@ -86,10 +88,10 @@ const ParticipantsCell = ({ t, viewer, net, profileLabel, formatCurrency }) =>
 const StatusBadge = ({ tx }) => {
   const status = displayStatus(tx);
   const colors = {
-    promise: ["#fef3c7", "#92400e"],
-    sold: ["#ecfdf5", "#047857"],
-    rented: ["#eff6ff", "#1d4ed8"],
-    cancelled: ["#fef2f2", "#b91c1c"],
+    promise: ["var(--color-warning-soft)", "var(--color-warning)"],
+    sold: ["var(--color-success-soft)", "var(--color-success)"],
+    rented: ["var(--color-info-soft)", "var(--color-info)"],
+    cancelled: ["var(--color-danger-soft)", "var(--color-danger)"],
   }[status];
   return (
     <span style={{ background: colors[0], color: colors[1], borderRadius: 999, padding: "2px 8px", fontSize: "0.78rem", whiteSpace: "nowrap" }}>
@@ -236,7 +238,7 @@ function TransactionDetailModal({
         </div>
 
         {actedLocked && (
-          <div className="admin-alert" style={{ background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb" }}>
+          <div className="admin-alert" style={{ background: "var(--color-subtle)", color: "var(--color-ink-soft)", border: "1px solid var(--color-line)" }}>
             {ACTED_LOCK_MESSAGE}
           </div>
         )}
@@ -251,19 +253,19 @@ function TransactionDetailModal({
           {tx.property?.property_type && (
             <div><strong>Bien :</strong> {PROPERTY_TYPE_LABELS[tx.property.property_type]}{tx.property.surface ? ` · ${tx.property.surface} m²` : ""}</div>
           )}
-          {tx.cancel_reason && <div style={{ color: "#b91c1c" }}><strong>Motif d'annulation :</strong> {tx.cancel_reason}</div>}
+          {tx.cancel_reason && <div style={{ color: "var(--color-danger)" }}><strong>Motif d'annulation :</strong> {tx.cancel_reason}</div>}
           {tx.notes && <div style={{ gridColumn: "1 / -1" }}><strong>Notes :</strong> {tx.notes}</div>}
         </div>
 
         <h3>Déductions avant commission</h3>
-        {(tx.deductions || []).length === 0 && <p style={{ fontSize: "0.88rem", color: "#6b7280" }}>Aucune déduction.</p>}
+        {(tx.deductions || []).length === 0 && <p style={{ fontSize: "0.88rem", color: "var(--color-ink-muted)" }}>Aucune déduction.</p>}
         {(tx.deductions || []).map((d) => (
           <div key={d.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 6, fontSize: "0.9rem" }}>
             <span>
               <strong>{d.label}</strong>
               {d.beneficiary ? ` · ${d.beneficiary}` : ""} · {formatCurrency(d.amount_ht)} HT
               <br />
-              <span style={{ color: "#6b7280" }}>{d.reason}</span>
+              <span style={{ color: "var(--color-ink-muted)" }}>{d.reason}</span>
             </span>
             {editable && (
               <button type="button" className="btn-outline-small" disabled={busy} onClick={() => deleteDeduction(d.id)}>
@@ -379,8 +381,7 @@ export default function TransactionsPage({
   managedUserIds,
   onSignSale,
   onCancel,
-  focusTransactionId,
-  onFocusHandled,
+  detailId = null, // /transactions/:id
   filterProfiles,
   profileLabel,
   formatCurrency,
@@ -394,13 +395,9 @@ export default function TransactionsPage({
   const [dateField, setDateField] = useState("deed_date");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [detailId, setDetailId] = useState(null);
+  const navigate = useNavigate();
+  const setDetailId = (id) => navigate(transactionPath(id));
 
-  useEffect(() => {
-    if (!focusTransactionId) return;
-    setDetailId(focusTransactionId);
-    onFocusHandled?.();
-  }, [focusTransactionId, onFocusHandled]);
   const viewer = useMemo(
     () => ({ userId, isAdmin, isManager, managedUserIds: managedUserIds || [] }),
     [userId, isAdmin, isManager, managedUserIds]
@@ -508,7 +505,7 @@ export default function TransactionsPage({
         }
       `}</style>
 
-      <div className="tx-table-wrap" style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16 }}>
+      <div className="tx-table-wrap" style={{ background: "var(--color-surface)", border: "1px solid var(--color-line)", borderRadius: 16 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -520,7 +517,7 @@ export default function TransactionsPage({
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td style={{ ...cell, color: "#6b7280" }} colSpan={10}>
+                <td style={{ ...cell, color: "var(--color-ink-muted)" }} colSpan={10}>
                   {loading ? "Chargement…" : "Aucune transaction."}
                 </td>
               </tr>
@@ -558,7 +555,7 @@ export default function TransactionsPage({
 
       <div className="tx-cards">
         {filtered.length === 0 && (
-          <p style={{ color: "#6b7280" }}>{loading ? "Chargement…" : "Aucune transaction."}</p>
+          <p style={{ color: "var(--color-ink-muted)" }}>{loading ? "Chargement…" : "Aucune transaction."}</p>
         )}
         {filtered.map((t) => {
           const r = rowData(t);
@@ -567,8 +564,8 @@ export default function TransactionsPage({
               key={t.id}
               onClick={() => setDetailId(t.id)}
               style={{
-                background: "#fff",
-                border: "1px solid #e5e7eb",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-line)",
                 borderRadius: 14,
                 padding: 12,
                 fontSize: "0.88rem",
@@ -616,7 +613,7 @@ export default function TransactionsPage({
           </div>
         ))}
       </div>
-      <p style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+      <p style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}>
         Totaux calculés sur les transactions filtrées, annulées exclues.
       </p>
 

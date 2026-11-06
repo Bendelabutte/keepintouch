@@ -1,8 +1,16 @@
 // src/components/CompactRow.jsx
+// Ligne de la liste clients : un clic la déplie (un seul dépliement à la fois), un second la replie.
 import React from "react";
-import DelayPill from "./DelayPill";
-import { phaseBadgeClass } from "../lib/relance";
+import { normalizePhase, PHASE_LABELS } from "../lib/relance";
 import { closedBadgeLabel, closedDate, closureReasonLabel } from "../lib/clientStatus";
+import { Badge, Icon, cx, focusRing } from "./ui";
+
+const PHASE_TONES = { pre_mandat: "neutral", mandat: "primary", sous_promesse: "warning", vendu: "success" };
+
+export function DelayBadge({ diffDays, delayLabel }) {
+  if (diffDays === null || diffDays === undefined || !delayLabel) return null;
+  return <Badge tone={diffDays < 0 ? "danger" : diffDays === 0 ? "accent" : "info"}>{delayLabel}</Badge>;
+}
 
 export default function CompactRow({
   client,
@@ -16,136 +24,80 @@ export default function CompactRow({
   formatDate,
   getLastRelanceDate,
   renderClientDetailCard,
-  getSellerStageLabel,
 }) {
-  const name =
-    (client.first_name || "") +
-      (client.first_name && client.last_name ? " " : "") +
-      (client.last_name || "") || "(Sans nom)";
-
-  const commercialEmail = getCommercialEmail(client.owner_id);
+  const name = [client.first_name, client.last_name].filter(Boolean).join(" ").trim() || "(Sans nom)";
   const { delayLabel, diffDays } = getFollowupInfo(client);
-
   const lastRel = getLastRelanceDate(client.id);
-  const lastRelLabel = lastRel ? formatDate(lastRel) : "—";
-
   const next = getNextDueDate(client);
-  const nextLabel = next ? formatDate(next) : "—";
-
   const isExpanded = expandedClientId === client.id;
-  const isSeller = client.category === "seller";
-  const sellerStageLabel = isSeller ? getSellerStageLabel(client) : "";
-  const sellerStageClass = phaseBadgeClass(client.deal_stage);
-
-  // Dossier clos : ligne grisée, badge « Clos » / « Vendu », ni retard ni prochaine relance
   const isClosed = client.status === "closed";
   const closedBadge = closedBadgeLabel(client);
+  const cat = client.category;
+  const phase = normalizePhase(client.deal_stage);
 
-  const isMobile =
-    typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
-
-  const leftLine2 = (() => {
+  const details = (() => {
     if (isClosed) {
-      const where = client.category === "seller" ? client.property_address : client.category === "after" ? client.after_address : client.area;
+      const where = cat === "seller" ? client.property_address : cat === "after" ? client.after_address : client.area;
       const when = closedDate(client);
+      return [where, `Clos le ${when ? formatDate(when) : "—"}`, closureReasonLabel(client.closure_reason || client.sale_result)];
+    }
+    const nextPart = `Prochaine : ${next ? formatDate(next) : "—"}`;
+    const lastPart = `Dernière relance : ${lastRel ? formatDate(lastRel) : "—"}`;
+    if (cat === "seller") {
+      return [client.property_address, client.estimation_date ? `Estimation : ${formatDate(client.estimation_date)}` : null, lastPart, nextPart];
+    }
+    if (cat === "buyer") {
       return [
-        where ? (client.category === "buyer" ? `Secteur : ${where}` : `Adresse : ${where}`) : null,
-        `Clos le ${when ? formatDate(when) : "—"}`,
-        closureReasonLabel(client.closure_reason || client.sale_result),
-      ]
-        .filter(Boolean)
-        .join("  •  ");
+        client.area ? `Secteur : ${client.area}` : null,
+        client.budget_max ? `Budget : ${client.budget_max}` : null,
+        client.project_type,
+        client.rooms ? `${client.rooms} p.` : null,
+        lastPart,
+        nextPart,
+      ];
     }
-
-    if (client.category === "seller") {
-      const addr = client.property_address ? client.property_address : "—";
-      const est = client.estimation_date ? formatDate(client.estimation_date) : "—";
-      return `Adresse : ${addr}  •  Estimation : ${est}  •  Dernière relance : ${lastRelLabel}  •  Prochaine : ${nextLabel}`;
-    }
-
-    if (client.category === "buyer") {
-      const sector = client.area ? client.area : "—";
-
-      if (isMobile) {
-        const parts = [
-          `Secteur : ${sector}`,
-          client.budget_max ? `Budget : ${client.budget_max}` : null,
-          client.min_surface ? `Surface min : ${client.min_surface} m²` : null,
-          `Prochaine : ${nextLabel}`,
-        ].filter(Boolean);
-
-        return parts.join("  •  ");
-      }
-
-      const budget = client.budget_max ? `Budget : ${client.budget_max}` : null;
-      const surf = client.min_surface ? `Surf min : ${client.min_surface} m²` : null;
-      const beds = client.bedrooms ? `Chambres : ${client.bedrooms}` : null;
-      const parts = [
-        `Secteur : ${sector}`,
-        budget,
-        surf,
-        beds,
-        client.acquisition_date ? `Enregistrement : ${formatDate(client.acquisition_date)}` : null,
-        `Dernière relance : ${lastRelLabel}`,
-        `Prochaine : ${nextLabel}`,
-      ].filter(Boolean);
-
-      return parts.join("  •  ");
-    }
-
-    const addr = client.after_address ? client.after_address : "—";
-    const sale = client.created_at ? formatDate(client.created_at) : "—";
-
-    if (isMobile) {
-      return `Adresse : ${addr}  •  Vente : ${sale}  •  Prochaine : ${nextLabel}`;
-    }
-
-    return `Adresse : ${addr}  •  Vente : ${sale}  •  Dernière relance : ${lastRelLabel}  •  Prochaine : ${nextLabel}`;
-  })();
+    const sale = client.sale_completed_at || client.created_at;
+    return [client.after_address, sale ? `Achat : ${formatDate(sale)}` : null, lastPart, nextPart];
+  })().filter(Boolean);
 
   return (
-    <div className={"compact-row" + (isExpanded ? " compact-row-expanded" : "") + (isClosed ? " compact-row-closed" : "")}>
+    <div
+      className={cx(
+        "overflow-hidden rounded-card border shadow-card transition-colors duration-150",
+        isClosed ? "border-line bg-subtle/70" : "border-line bg-surface",
+        isExpanded && "border-primary-line ring-1 ring-primary-line"
+      )}
+    >
       <button
-        className="compact-row-click"
-        onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
         type="button"
-        title={isExpanded ? "Replier" : "Déplier"}
+        aria-expanded={isExpanded}
+        onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
+        className={cx("flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-primary-soft/40", focusRing, "focus-visible:-outline-offset-2")}
       >
-        <div className="compact-row-main">
-          <div className="compact-row-line1">
-            <span className="compact-name">{name}</span>
-
-            {isClosed && (
-              <span className={"closed-badge" + (closedBadge === "Vendu" ? " closed-badge-sold" : "")}>{closedBadge}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={cx("font-semibold", isClosed ? "text-ink-muted" : "text-ink")}>{name}</span>
+            {isClosed ? (
+              <Badge tone={closedBadge === "Vendu" ? "success" : "muted"}>{closedBadge}</Badge>
+            ) : (
+              <>
+                {cat === "seller" && <Badge tone={PHASE_TONES[phase]}>{PHASE_LABELS[phase]}</Badge>}
+                {cat === "buyer" && client.deal_stage === "sous_promesse" && <Badge tone="warning">Sous promesse</Badge>}
+              </>
             )}
-            {!isClosed && isSeller && <span className={sellerStageClass}>{sellerStageLabel}</span>}
-            {!isClosed && client.category === "buyer" && client.deal_stage === "sous_promesse" && (
-              <span className={sellerStageClass}>Sous promesse</span>
-            )}
-
-            {(isAdmin || isManager) && (
-              <span className="compact-owner">— {commercialEmail || "—"}</span>
-            )}
-
-            {!isAdmin && !isManager && client.email && (
-              <span className="compact-owner">— {client.email}</span>
-            )}
+            {(isAdmin || isManager) && <span className="truncate text-xs text-ink-muted">{getCommercialEmail(client.owner_id) || "—"}</span>}
           </div>
-
-          <div className="compact-row-line2" title={leftLine2}>
-            {leftLine2}
+          <div className="tabular mt-0.5 truncate text-xs text-ink-muted" title={details.join(" · ")}>
+            {details.join("  ·  ")}
           </div>
         </div>
-
-        <div className="compact-row-right">
-          {!isClosed && <DelayPill diffDays={diffDays} delayLabel={delayLabel} />}
-          <span className="chev">{isExpanded ? "▲" : "▼"}</span>
+        <div className="flex shrink-0 items-center gap-2">
+          {!isClosed && <DelayBadge diffDays={diffDays} delayLabel={delayLabel} />}
+          <Icon name="chevronDown" size={18} className={cx("text-ink-muted transition-transform duration-150", isExpanded && "rotate-180")} />
         </div>
       </button>
 
-      {isExpanded && (
-        <div className="compact-expanded">{renderClientDetailCard(client)}</div>
-      )}
+      {isExpanded && <div className="border-t border-line bg-canvas/60 p-3 sm:p-4">{renderClientDetailCard(client)}</div>}
     </div>
   );
 }

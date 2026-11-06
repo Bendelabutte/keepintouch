@@ -27,20 +27,20 @@ import CompensationSettingsModal from "./CompensationSettingsModal";
 const fieldStyle = {
   width: "100%",
   padding: "9px 11px",
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--color-line-strong)",
   borderRadius: 10,
   fontSize: "0.92rem",
-  background: "#fff",
+  background: "var(--color-surface)",
   boxSizing: "border-box",
   marginTop: 4,
 };
-const labelStyle = { display: "block", fontSize: "0.85rem", fontWeight: 600, color: "#111827" };
+const labelStyle = { display: "block", fontSize: "0.85rem", fontWeight: 600, color: "var(--color-ink)" };
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 };
-const cell = { padding: "8px 10px", borderBottom: "1px solid #f1f5f9", fontSize: "0.86rem", verticalAlign: "top" };
-const head = { ...cell, fontWeight: 700, background: "#f9fafb", textAlign: "left", whiteSpace: "nowrap" };
+const cell = { padding: "8px 10px", borderBottom: "1px solid var(--color-line)", fontSize: "0.86rem", verticalAlign: "top" };
+const head = { ...cell, fontWeight: 700, background: "var(--color-subtle)", textAlign: "left", whiteSpace: "nowrap" };
 const num = { textAlign: "right", whiteSpace: "nowrap" };
 
-const STATUS_COLORS = { unpaid: ["#fef2f2", "#b91c1c"], partial: ["#fef3c7", "#92400e"], paid: ["#ecfdf5", "#047857"] };
+const STATUS_COLORS = { unpaid: ["var(--color-danger-soft)", "var(--color-danger)"], partial: ["var(--color-warning-soft)", "var(--color-warning)"], paid: ["var(--color-success-soft)", "var(--color-success)"] };
 const InvoiceBadge = ({ status }) => (
   <span
     style={{
@@ -142,7 +142,7 @@ function SalaryForm({ userId, formatCurrency, onCancel, onDone }) {
       </div>
       <p style={{ margin: "12px 0 0", fontSize: "0.9rem" }}>
         Part imputée sur le solde : <strong>{formatCurrency(Math.max(0, imputed))}</strong>
-        <span style={{ color: "#6b7280", fontSize: "0.8rem" }}> (le fixe et les primes ne diminuent pas le solde)</span>
+        <span style={{ color: "var(--color-ink-muted)", fontSize: "0.8rem" }}> (le fixe et les primes ne diminuent pas le solde)</span>
       </p>
       <label style={{ ...labelStyle, marginTop: 10 }}>
         Note
@@ -391,7 +391,7 @@ function UserDetail({
           <h2 className="dash-page-title" style={{ margin: "4px 0 0" }}>
             Rémunération{label ? ` · ${label}` : ""}
           </h2>
-          <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
+          <div style={{ fontSize: "0.85rem", color: "var(--color-ink-muted)" }}>
             {type ? COMPENSATION_TYPES[type] : "Type de rémunération non renseigné"}
             {type && ` · entrée ${settings.rate_entree ?? "—"} % · sortie ${settings.rate_sortie ?? "—"} %`}
           </div>
@@ -449,7 +449,7 @@ function UserDetail({
       </div>
 
       <h3 style={{ margin: "22px 0 8px" }}>Relevé</h3>
-      <div className="comp-table-wrap" style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16 }}>
+      <div className="comp-table-wrap" style={{ background: "var(--color-surface)", border: "1px solid var(--color-line)", borderRadius: 16 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -467,7 +467,7 @@ function UserDetail({
                 <td style={cell}>{r.date ? formatDate(r.date) : "—"}</td>
                 <td style={cell}>{r.label}</td>
                 <td style={cell}>{r.link || "—"}</td>
-                <td style={{ ...cell, ...num, color: r.amount > 0 ? "#047857" : r.amount < 0 ? "#b91c1c" : undefined }}>
+                <td style={{ ...cell, ...num, color: r.amount > 0 ? "var(--color-success)" : r.amount < 0 ? "var(--color-danger)" : undefined }}>
                   {r.amount === null ? "" : `${r.amount > 0 ? "+" : "−"} ${formatCurrency(Math.abs(r.amount))}`}
                 </td>
                 <td style={{ ...cell, ...num, fontWeight: 600 }}>{formatCurrency(r.balance)}</td>
@@ -490,11 +490,11 @@ function UserDetail({
           <div key={r.key} className="comp-card">
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
               <strong>{r.label}</strong>
-              <span style={{ whiteSpace: "nowrap", color: r.amount > 0 ? "#047857" : r.amount < 0 ? "#b91c1c" : undefined }}>
+              <span style={{ whiteSpace: "nowrap", color: r.amount > 0 ? "var(--color-success)" : r.amount < 0 ? "var(--color-danger)" : undefined }}>
                 {r.amount === null ? "" : `${r.amount > 0 ? "+" : "−"} ${formatCurrency(Math.abs(r.amount))}`}
               </span>
             </div>
-            <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+            <div style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}>
               {r.date ? formatDate(r.date) : "—"}
               {r.link ? ` · ${r.link}` : ""} · solde {formatCurrency(r.balance)}
             </div>
@@ -511,7 +511,7 @@ function UserDetail({
         <>
           <h3 style={{ margin: "22px 0 8px" }}>Factures</h3>
           {invoices.length === 0 ? (
-            <p style={{ color: "#6b7280", fontSize: "0.9rem" }}>Aucune facture déposée.</p>
+            <p style={{ color: "var(--color-ink-muted)", fontSize: "0.9rem" }}>Aucune facture déposée.</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {invoices.map((i) => {
@@ -521,7 +521,7 @@ function UserDetail({
                     <div>
                       <strong>N° {i.number}</strong> du {formatDate(i.issued_at)} · {formatCurrency(i.amount_ttc)} TTC
                       {status === "partial" && (
-                        <span style={{ fontSize: "0.8rem", color: "#6b7280" }}> · payé {formatCurrency(invoicePaidAmount(i, payments))}</span>
+                        <span style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}> · payé {formatCurrency(invoicePaidAmount(i, payments))}</span>
                       )}
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -695,9 +695,9 @@ export default function CompensationPage({
         </button>
       </div>
       {loadError && <p className="error-text">{loadError}</p>}
-      {!isAdmin && <p style={{ color: "#6b7280", fontSize: "0.88rem" }}>Lecture seule : votre équipe.</p>}
+      {!isAdmin && <p style={{ color: "var(--color-ink-muted)", fontSize: "0.88rem" }}>Lecture seule : votre équipe.</p>}
 
-      <div className="comp-table-wrap" style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16 }}>
+      <div className="comp-table-wrap" style={{ background: "var(--color-surface)", border: "1px solid var(--color-line)", borderRadius: 16 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -741,7 +741,7 @@ export default function CompensationPage({
               <strong>{r.label}</strong>
               <strong>{formatCurrency(r.balance)}</strong>
             </div>
-            <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+            <div style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}>
               {r.settings.compensation_type ? COMPENSATION_TYPES[r.settings.compensation_type] : "Type à renseigner"} · à venir{" "}
               {formatCurrency(r.projection.amount_due)} · acquis {year} {formatCurrency(r.earned)}
             </div>
@@ -749,7 +749,7 @@ export default function CompensationPage({
         ))}
       </div>
       {rows.some((r) => r.projection.incomplete) && (
-        <p style={{ fontSize: "0.8rem", color: "#6b7280" }}>* Projection incomplète : type ou taux non renseigné.</p>
+        <p style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}>* Projection incomplète : type ou taux non renseigné.</p>
       )}
       {settingsModal}
     </>

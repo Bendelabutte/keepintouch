@@ -1,9 +1,11 @@
 // src/components/PromptModal.jsx
-// Petite fenêtre à un seul champ : date (« Acte signé ») ou motif (« Promesse annulée »).
+// Petite fenêtre à un seul champ : date (« Acte signé ») ou motif (« Promesse annulée », réouverture).
 import React, { useEffect, useState } from "react";
+import { Alert, Button, Field, Input, Modal, Textarea } from "./ui";
 
 export default function PromptModal({ prompt, onCancel }) {
-  // prompt = { title, text?, label, type: "date" | "textarea", initialValue?, confirmLabel, onConfirm(value) }
+  // prompt = { title, text?, warning?, label, type: "date" | "textarea", initialValue?, confirmLabel,
+  //            danger?, onConfirm(value) }
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -13,8 +15,6 @@ export default function PromptModal({ prompt, onCancel }) {
     setBusy(false);
     setError("");
   }, [prompt]);
-
-  if (!prompt) return null;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -32,41 +32,41 @@ export default function PromptModal({ prompt, onCancel }) {
     }
   };
 
-  const fieldStyle = {
-    width: "100%",
-    padding: "9px 11px",
-    border: "1px solid #d1d5db",
-    borderRadius: 10,
-    fontSize: "0.95rem",
-    boxSizing: "border-box",
-    marginTop: 6,
-  };
-
   return (
-    <div className="admin-modal-backdrop" onClick={onCancel}>
-      <div className="admin-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
-        <h2>{prompt.title}</h2>
-        {prompt.text && <p className="admin-modal-sub">{prompt.text}</p>}
-        <form onSubmit={submit}>
-          <label style={{ display: "block", marginTop: 12, fontSize: "0.88rem", fontWeight: 600 }}>
-            {prompt.label} *
+    <Modal
+      open={!!prompt}
+      size="sm"
+      busy={busy}
+      title={prompt?.title}
+      description={prompt?.text}
+      onClose={onCancel}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>
+            Annuler
+          </Button>
+          <Button type="submit" form="prompt-form" variant={prompt?.danger ? "danger" : "primary"} loading={busy}>
+            {prompt?.confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      {prompt && (
+        <form id="prompt-form" onSubmit={submit} className="space-y-4" noValidate>
+          {prompt.warning && (
+            <Alert tone="warning" title="Attention">
+              {prompt.warning}
+            </Alert>
+          )}
+          <Field label={prompt.label} required error={error}>
             {prompt.type === "textarea" ? (
-              <textarea rows={3} style={{ ...fieldStyle, resize: "vertical" }} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+              <Textarea rows={3} value={value} onChange={(e) => setValue(e.target.value)} />
             ) : (
-              <input type="date" style={fieldStyle} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+              <Input type="date" value={value} onChange={(e) => setValue(e.target.value)} />
             )}
-          </label>
-          {error && <p className="error-text" style={{ marginTop: 8 }}>{error}</p>}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-            <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>
-              Annuler
-            </button>
-            <button type="submit" className="btn-primary" disabled={busy}>
-              {busy ? "…" : prompt.confirmLabel}
-            </button>
-          </div>
+          </Field>
         </form>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 }

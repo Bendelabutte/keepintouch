@@ -107,8 +107,8 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
             margin: "2px 0 0",
             padding: 4,
             listStyle: "none",
-            background: "#fff",
-            border: "1px solid #d1d5db",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-line-strong)",
             borderRadius: 10,
             boxShadow: "0 8px 20px rgba(0,0,0,0.12)",
             fontSize: "0.9rem",
@@ -133,7 +133,7 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
                 whiteSpace: "normal",
                 overflowWrap: "anywhere",
                 lineHeight: 1.35,
-                background: i === active ? "#eef2ff" : "transparent",
+                background: i === active ? "var(--color-primary-soft)" : "transparent",
               }}
             >
               {s.label}

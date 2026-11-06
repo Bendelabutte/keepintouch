@@ -52,3 +52,7 @@ export const EMAIL_ERROR = "Adresse email invalide (exemple : nom@domaine.fr).";
 export const emailError = (value) => (isValidEmail(value) ? "" : EMAIL_ERROR);
 
 export const normalizeEmail = (value) => String(value ?? "").trim();
+
+// Fiche client : au moins un moyen de contact (téléphone ou email).
+export const contactError = (values) =>
+  !String(values?.phone || "").trim() && !String(values?.email || "").trim() ? "Renseignez un téléphone ou un email." : "";

@@ -22,8 +22,8 @@ const clientMeta = (c, profileLabel) =>
 
 const cardStyle = {
   marginTop: 6,
-  border: "1px solid #c7d2fe",
-  background: "#eef2ff",
+  border: "1px solid var(--color-primary-line)",
+  background: "var(--color-primary-soft)",
   borderRadius: 10,
   padding: "8px 10px",
   display: "flex",
@@ -36,10 +36,10 @@ const cardStyle = {
 const fieldStyle = {
   width: "100%",
   padding: "9px 11px",
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--color-line-strong)",
   borderRadius: 10,
   fontSize: "0.92rem",
-  background: "#fff",
+  background: "var(--color-surface)",
   boxSizing: "border-box",
   marginTop: 4,
 };
@@ -72,7 +72,7 @@ export default function BuyerFields({
         <div style={cardStyle}>
           <span>
             <strong>{clientLabel(selectedClient)}</strong>
-            <span style={{ fontSize: "0.8rem", color: "#4b5563" }}> · {clientMeta(selectedClient, profileLabel)}</span>
+            <span style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}> · {clientMeta(selectedClient, profileLabel)}</span>
           </span>
           {onSelectClient && (
             <button type="button" className="btn-outline-small" onClick={() => onSelectClient(null)}>
@@ -121,9 +121,9 @@ export default function BuyerFields({
         <div
           role="listbox"
           aria-label="Fiches existantes correspondantes"
-          style={{ marginTop: 6, border: "1px solid #e5e7eb", borderRadius: 10, background: "#fff", overflow: "hidden" }}
+          style={{ marginTop: 6, border: "1px solid var(--color-line)", borderRadius: 10, background: "var(--color-surface)", overflow: "hidden" }}
         >
-          <div style={{ fontSize: "0.78rem", color: "#6b7280", padding: "6px 10px", background: "#f9fafb" }}>
+          <div style={{ fontSize: "0.78rem", color: "var(--color-ink-muted)", padding: "6px 10px", background: "var(--color-subtle)" }}>
             Fiche déjà existante ? Choisissez-la pour éviter un doublon.
           </div>
           {suggestions.map((c) => (
@@ -139,14 +139,14 @@ export default function BuyerFields({
                 textAlign: "left",
                 padding: "7px 10px",
                 border: "none",
-                borderTop: "1px solid #f1f5f9",
-                background: "#fff",
+                borderTop: "1px solid var(--color-line)",
+                background: "var(--color-surface)",
                 cursor: "pointer",
                 fontSize: "0.86rem",
               }}
             >
               <strong>{clientLabel(c)}</strong>
-              <span style={{ color: "#6b7280" }}> · {clientMeta(c, profileLabel)}</span>
+              <span style={{ color: "var(--color-ink-muted)" }}> · {clientMeta(c, profileLabel)}</span>
             </button>
           ))}
         </div>
