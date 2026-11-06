@@ -1,6 +1,7 @@
 // src/components/ClientModal.jsx
 import React from "react";
 import AddressAutocomplete from "./AddressAutocomplete";
+import { emailError, formatPhoneInput } from "../lib/contact";
 
 export default function ClientModal({
   showAddModal,
@@ -12,6 +13,8 @@ export default function ClientModal({
   handleSaveClient,
 }) {
   if (!showAddModal) return null;
+
+  const emailMsg = emailError(newClient.email);
 
   return (
     <div
@@ -87,15 +90,19 @@ export default function ClientModal({
                 type="email"
                 value={newClient.email}
                 onChange={(e) => handleNewClientChange("email", e.target.value)}
+                aria-invalid={!!emailMsg}
               />
+              {emailMsg && <span className="field-error">{emailMsg}</span>}
             </label>
 
             <label>
               Téléphone *
               <input
-                type="text"
+                type="tel"
+                inputMode="tel"
+                placeholder="06 77 66 55 44"
                 value={newClient.phone}
-                onChange={(e) => handleNewClientChange("phone", e.target.value)}
+                onChange={(e) => handleNewClientChange("phone", formatPhoneInput(e.target.value))}
                 required
               />
             </label>
@@ -133,12 +140,15 @@ export default function ClientModal({
 
             {newClient.category === "seller" && (
               <label>
-                Date remise estimation
+                Date de l’estimation
                 <input
                   type="date"
                   value={newClient.estimation_date}
                   onChange={(e) => handleNewClientChange("estimation_date", e.target.value)}
                 />
+                {!editingClientId && newClient.estimation_date && !newClient.manual_next_due_date && (
+                  <span className="field-hint">1re relance le lendemain : « Envoyer l’estimation ».</span>
+                )}
               </label>
             )}
 
@@ -314,7 +324,7 @@ export default function ClientModal({
             >
               Annuler
             </button>
-            <button type="submit" className="btn-primary">
+            <button type="submit" className="btn-primary" disabled={!!emailMsg}>
               Enregistrer
             </button>
           </div>

@@ -2,7 +2,7 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { baseCss } from "./styles/baseCss";
-import { addDaysToDate, parseDateStr, todayStr as getTodayStr } from "./lib/dates";
+import { addDaysToDate, todayStr as getTodayStr } from "./lib/dates";
 import { computeStats } from "./lib/stats";
 import {
   RELANCE_DEFAULTS,
@@ -15,7 +15,10 @@ import {
   followUpForEdit,
   normalizePhase,
   phaseChangeFollowUp,
+  initialFollowUp,
 } from "./lib/relance";
+import { DEFAULT_STATUS_FILTER, STATUS_FILTERS, matchesStatusFilter, statusFilterCounts } from "./lib/clientStatus";
+import { emailError, formatPhone, formatPhoneInput, normalizeEmail, normalizePhone, phoneSearchDigits } from "./lib/contact";
 import { fetchAllRows } from "./lib/fetchAll";
 import {
   buyerPayload,
@@ -37,7 +40,6 @@ import ClosureModal from "./components/ClosureModal";
 import ProfileModal from "./components/ProfileModal";
 import ReleaseNotesModal from "./components/ReleaseNotesModal";
 import TransactionFormModal from "./components/TransactionFormModal";
-import TransactionsPage from "./components/TransactionsPage";
 import PromptModal from "./components/PromptModal";
 import CompensationSettingsModal from "./components/CompensationSettingsModal";
 import { projectedCompensation, projectionLabel } from "./lib/compensation";
@@ -45,6 +47,7 @@ import { projectedCompensation, projectionLabel } from "./lib/compensation";
 // recharts chargé à la demande (tableau de bord) : le reste de l'application n'en paie pas le poids.
 const DashboardChart = lazy(() => import("./components/DashboardChart"));
 const CompensationPage = lazy(() => import("./components/CompensationPage"));
+const TransactionsPage = lazy(() => import("./components/TransactionsPage"));
 
 function App() {
   // Auth / session
@@ -105,22 +108,16 @@ function App() {
 
   // Filtres
   const [currentTab, setCurrentTab] = useState("vendeur");
-  const [statusFilter, setStatusFilter] = useState("arelancer");
+  const [statusFilter, setStatusFilter] = useState(DEFAULT_STATUS_FILTER);
+  const [statusCounts, setStatusCounts] = useState({ arelancer: 0, tous: 0, clos: 0 });
   const [commercialFilter, setCommercialFilter] = useState("Tous");
   const [dashboardCommercialFilter, setDashboardCommercialFilter] = useState("Tous");
   const [sellerStageFilter, setSellerStageFilter] = useState("premandat");
   const [searchTerm, setSearchTerm] = useState("");
 
   // UI
-  const [viewMode, setViewMode] = useState(() => {
-    try {
-      return localStorage.getItem("kit_view_mode") || "compact";
-    } catch (e) {
-      return "compact";
-    }
-  });
   const [expandedClientId, setExpandedClientId] = useState(null);
-const RELEASE_NOTES_VERSION = "3.2";
+const RELEASE_NOTES_VERSION = "4.0";
 const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   // Rôles
   const [userRole, setUserRole] = useState("user");
@@ -214,11 +211,6 @@ const [showReleaseNotes, setShowReleaseNotes] = useState(false);
     document.title = "Keepintouch";
   }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem("kit_view_mode", viewMode);
-    } catch (e) {}
-  }, [viewMode]);
 
 // Nouveautés : affichées une fois par utilisateur et par version (profil, sinon localStorage).
 useEffect(() => {
@@ -434,7 +426,7 @@ useEffect(() => {
         setProfileForm({
           first_name: myProfile.first_name || "",
           last_name: myProfile.last_name || "",
-          phone: myProfile.phone || "",
+          phone: formatPhone(myProfile.phone),
         });
       }
 
@@ -632,7 +624,6 @@ useEffect(() => {
     }
   };
 
-  const query_date = (v) => !!v && /^\d{4}-\d{2}-\d{2}/.test(String(v));
 
   const getNextDueDate = (client) => {
     // Fiche vendue ou clôturée : pas de relance, donc jamais de retard (ni de date recalculée
@@ -720,26 +711,6 @@ useEffect(() => {
       }
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    if (cat === "seller" && sellerStageFilter === "vendu") {
-      // fiches vendues : toutes closes, affichées quel que soit le filtre de statut
-    } else if (statusFilter === "clos") {
-      list = list.filter((c) => c.status === "closed");
-    } else if (statusFilter === "encours") {
-      list = list.filter((c) => c.status !== "closed");
-    } else if (statusFilter === "arelancer") {
-      list = list.filter((c) => c.status !== "closed");
-      list = list.filter((c) => {
-        const next = getNextDueDate(c);
-        if (!next) return false;
-        const d = new Date(next);
-        d.setHours(0, 0, 0, 0);
-        return d <= today;
-      });
-    }
-
     if ((isAdmin || isManager) && commercialFilter !== "Tous") {
       list = list.filter((c) => getCommercialEmail(c.owner_id) === commercialFilter);
     }
@@ -759,9 +730,18 @@ useEffect(() => {
             .filter(Boolean)
             .join(" ")
         );
-        return haystack.includes(q);
+        const qDigits = phoneSearchDigits(searchTerm);
+        return (
+          haystack.includes(q) ||
+          (qDigits.length >= 2 && phoneSearchDigits(c.phone).includes(qDigits))
+        );
       });
     }
+
+    // Statut en dernier : les compteurs portent sur la liste déjà filtrée (onglet, phase, commercial, recherche).
+    const today = new Date();
+    setStatusCounts(statusFilterCounts(list, getNextDueDate, today));
+    list = list.filter((c) => matchesStatusFilter(c, statusFilter, getNextDueDate(c), today));
 
     list.sort((a, b) => {
       const aNext = getNextDueDate(a);
@@ -844,7 +824,7 @@ useEffect(() => {
     first_name: client.first_name || "",
     last_name: client.last_name || "",
     email: client.email || "",
-    phone: client.phone || "",
+    phone: formatPhone(client.phone),
     estimation_date: client.estimation_date || "",
     created_at: client.created_at || "",
     acquisition_date: client.acquisition_date || "",
@@ -875,18 +855,6 @@ useEffect(() => {
     }));
   };
 
-  const computeInitialNextDue = (cl) => {
-    const cfg = getRelanceCfgForCategory(cl.category);
-    const initialDays = Number(cfg.initial_days);
-
-    let base = null;
-    if (cl.category === "seller" && cl.estimation_date) base = parseDateStr(cl.estimation_date);
-    else if (cl.category === "buyer" && query_date(cl.acquisition_date))
-      base = parseDateStr(cl.acquisition_date);
-    else if (cl.category === "after" && cl.created_at) base = parseDateStr(cl.created_at);
-
-    return addDaysToDate(base || new Date(), initialDays);
-  };
 
   const handleSaveClient = async (e) => {
   e.preventDefault();
@@ -899,8 +867,12 @@ useEffect(() => {
     alert("Le nom du client est obligatoire.");
     return;
   }
-  if (!newClient.phone.trim()) {
+  if (!normalizePhone(newClient.phone)) {
     alert("Le téléphone est obligatoire.");
+    return;
+  }
+  if (emailError(newClient.email)) {
+    alert(emailError(newClient.email));
     return;
   }
   if (newClient.category === "seller" && !newClient.property_address.trim()) {
@@ -912,14 +884,15 @@ useEffect(() => {
     setIsLoading(true);
     setLastError("");
 
-    const chosenNext = newClient.manual_next_due_date || computeInitialNextDue(newClient);
+    const initial = initialFollowUp(newClient, relanceConfig);
+    const chosenNext = newClient.manual_next_due_date || initial.next_due_date;
 
     const payload = {
       category: newClient.category || "seller",
       first_name: newClient.first_name || null,
       last_name: newClient.last_name || null,
-      email: newClient.email || null,
-      phone: newClient.phone || null,
+      email: normalizeEmail(newClient.email) || null,
+      phone: normalizePhone(newClient.phone) || null,
       estimation_date: newClient.category === "seller" ? newClient.estimation_date || null : null,
       created_at:
         newClient.category === "after"
@@ -1014,6 +987,8 @@ useEffect(() => {
         ...payload,
         owner_id: session.user.id,
         status: "active",
+        // « Envoyer l'estimation » : seulement si la 1re relance calculée est retenue
+        next_due_note: newClient.manual_next_due_date ? null : initial.next_due_note,
         mandat_at:
           newClient.category === "seller" && newClient.deal_stage === "mandat"
             ? new Date().toISOString()
@@ -1210,75 +1185,64 @@ useEffect(() => {
     try {
       setIsLoading(true);
 
-      // Fiche sous promesse (ou promesse en cours) : annulation + clôture + commentaire en un seul appel.
-      if (client.category === "seller" && (client.deal_stage === "sous_promesse" || findOpenPromise(client))) {
-        const { error: closeErr } = await supabase.rpc("close_seller_with_promise", {
-          p_client_id: client.id,
-          p_reason: reason,
-        });
-        if (closeErr) {
-          alert("Erreur lors de la clôture du client : " + closeErr.message);
-          return;
-        }
-        setClosureClient(null);
-        await reloadAfterTransaction();
-        return;
-      }
-
-      const nowIso = new Date().toISOString();
-      const updatePayload = {
-        status: "closed",
-        closure_reason: reason,
-        next_due_date: null,
-        next_due_note: null,
-        next_due_source: null,
-        next_followup_at: null,
-        closed_at: nowIso,
-        closed_by: session.user.id,
-      };
-
-      if (client.category === "seller") {
-        updatePayload.sale_result = reason;
-
-        if (reason === "vendu_autre_agence" || reason === "vendu_seul") {
-          updatePayload.sale_completed_at = getTodayStr();
-        }
-      }
-
-      const { data: updatedRows, error: updErr } = await supabase
-        .from("clients")
-        .update(updatePayload)
-        .eq("id", client.id)
-        .select("id");
-
-      if (updErr || !updatedRows || updatedRows.length === 0) {
-        const msg = updErr?.message || "aucune ligne modifiée (droits insuffisants ?)";
-        console.error("Erreur update status closed :", msg);
-        alert("Erreur lors de la clôture du client : " + msg);
-        return;
-      }
-
-      const commentBody = `Client clôturé : ${reason}`;
-
-      const { error: commentErr } = await supabase.from("client_comments").insert({
-        client_id: client.id,
-        body: commentBody,
-        author_id: session.user.id,
+      // Clôture en base (close_client) : promesse en cours annulée, commentaire, refus si déjà clos.
+      const { error: closeErr } = await supabase.rpc("close_client", {
+        p_client_id: client.id,
+        p_reason: reason,
       });
-
-      if (commentErr) {
-        console.warn("Erreur insertion closure comment :", commentErr.message);
+      if (closeErr) {
+        alert("Erreur lors de la clôture du client : " + closeErr.message);
+        return;
       }
 
       setClosureClient(null);
-      await fetchCommentsFromDb();
-      await fetchClientsFromDb();
+      await reloadAfterTransaction();
     } catch (err) {
       console.error("Erreur clôture client", err);
       alert("Erreur lors de la clôture du client (voir console).");
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // ---------- DOSSIER CLOS ----------
+
+  // Fiche close : le commentaire reste possible, sans relance.
+  const handleAddClosedNote = async (client) => {
+    const text = (commentInputs[client.id] || "").trim();
+    if (!text) {
+      alert("Écris la note avant de l’ajouter.");
+      return;
+    }
+    const { error } = await supabase.from("client_comments").insert({
+      client_id: client.id,
+      body: text,
+      author_id: session.user.id,
+    });
+    if (error) {
+      alert("Erreur lors de l’ajout de la note : " + error.message);
+      return;
+    }
+    setCommentInputs((prev) => ({ ...prev, [client.id]: "" }));
+    await fetchCommentsFromDb();
+  };
+
+  // Admin : rouvrir un dossier clos par erreur (motif obligatoire, relance recalculée en base).
+  const openReopenClient = (client) => {
+    setPrompt({
+      title: "Rouvrir le dossier",
+      text: "Réservé à la correction d’une erreur. La fiche redevient active et la prochaine relance est recalculée selon sa phase.",
+      label: "Motif",
+      type: "textarea",
+      confirmLabel: "Rouvrir le dossier",
+      onConfirm: async (reason) => {
+        const { error } = await supabase.rpc("reopen_client", { p_client_id: client.id, p_reason: reason });
+        if (error) throw error;
+        setPrompt(null);
+        await fetchClientsFromDb();
+        await fetchCommentsFromDb();
+      },
+    });
   };
 
   // ---------- TRANSACTIONS ----------
@@ -1521,7 +1485,7 @@ useEffect(() => {
 
     const firstName = inviteProfileForm.first_name.trim();
     const lastName = inviteProfileForm.last_name.trim();
-    const phone = inviteProfileForm.phone.trim();
+    const phone = normalizePhone(inviteProfileForm.phone);
     const password = inviteProfileForm.password;
     const confirmPassword = inviteProfileForm.confirm_password;
 
@@ -1603,7 +1567,6 @@ useEffect(() => {
 
   const statusSuffix = useMemo(() => {
     if (statusFilter === "arelancer") return "à relancer";
-    if (statusFilter === "encours") return "en cours";
     if (statusFilter === "clos") return "clos";
     return "";
   }, [statusFilter]);
@@ -1629,9 +1592,8 @@ useEffect(() => {
         ? "Aucun client acquéreur"
         : "Aucun client après-vente";
 
-    if (statusFilter === "tous") return `${base}.`;
+    if (statusFilter === "tous") return `${base} actif.`;
     if (statusFilter === "arelancer") return `${base} à relancer.`;
-    if (statusFilter === "encours") return `${base} en cours.`;
     if (statusFilter === "clos") return `${base} clos.`;
     return `${base}.`;
   };
@@ -1668,10 +1630,20 @@ useEffect(() => {
     };
   };
 
+  // Dernière date de promesse connue pour une fiche vendeur (dates clés d'un dossier clos).
+  const promiseDateFor = (c) => {
+    if (c.category !== "seller") return null;
+    const dates = transactions
+      .filter((t) => t.seller_client_id === c.id && t.kind === "sale" && t.preliminary_date)
+      .map((t) => t.preliminary_date)
+      .sort();
+    return dates[dates.length - 1] || null;
+  };
+
   const openClientFiche = (client) => {
     setPage("clients");
     setCurrentTab(client.category === "after" ? "apresvente" : client.category === "buyer" ? "acquereur" : "vendeur");
-    setStatusFilter("tous");
+    setStatusFilter(client.status === "closed" ? "clos" : "tous");
     setSearchTerm([client.first_name, client.last_name].filter(Boolean).join(" "));
   };
 
@@ -1702,6 +1674,9 @@ useEffect(() => {
       onPassMandat={handlePassMandat}
       onPromise={openPromiseForm}
       soldInfo={soldInfoFor(c)}
+      promiseDate={promiseDateFor(c)}
+      onAddClosedNote={handleAddClosedNote}
+      onReopen={openReopenClient}
       formatCurrency={formatCurrency}
       onOpenClient={openClientFiche}
       onOpenTransaction={openTransaction}
@@ -1718,14 +1693,7 @@ useEffect(() => {
       <>
         <h2 className="section-title">{sectionTitle}</h2>
 
-        {viewMode === "detail" ? (
-          <div className="clients-list">
-            {list.map((c) => (
-              <div key={c.id}>{renderClientDetailCard(c)}</div>
-            ))}
-          </div>
-        ) : (
-          <div className="compact-list">
+        <div className="compact-list">
             {list.map((c) => (
               <div key={c.id}>
                 <CompactRow
@@ -1745,7 +1713,6 @@ useEffect(() => {
               </div>
             ))}
           </div>
-        )}
       </>
     );
   };
@@ -1948,7 +1915,7 @@ useEffect(() => {
 
     const firstName = profileForm.first_name.trim();
     const lastName = profileForm.last_name.trim();
-    const phone = profileForm.phone.trim();
+    const phone = normalizePhone(profileForm.phone);
 
     if (!firstName) {
       setProfileMsg("Erreur : le prénom est obligatoire.");
@@ -2474,9 +2441,10 @@ const handleCloseReleaseNotesTemporary = () => {
             <label>
               Téléphone
               <input
-                type="text"
+                type="tel"
+                inputMode="tel"
                 value={inviteProfileForm.phone}
-                onChange={(e) => handleInviteProfileFormChange("phone", e.target.value)}
+                onChange={(e) => handleInviteProfileFormChange("phone", formatPhoneInput(e.target.value))}
                 required
               />
             </label>
@@ -2631,6 +2599,7 @@ const handleCloseReleaseNotesTemporary = () => {
           />
           </Suspense>
         ) : page === "transactions" ? (
+          <Suspense fallback={<p>Chargement…</p>}>
           <TransactionsPage
             transactions={transactions}
             loading={transactionsLoading}
@@ -2651,6 +2620,7 @@ const handleCloseReleaseNotesTemporary = () => {
             onNew={openNewTransaction}
             onEdit={openEditTransaction}
           />
+          </Suspense>
         ) : page === "dashboard" ? (
           <>
             <div
@@ -2766,7 +2736,6 @@ const handleCloseReleaseNotesTemporary = () => {
                   setCommercialFilter(
                     (isAdmin || isManager) ? dashboardCommercialFilter : "Tous"
                   );
-                  setViewMode("compact");
                   setSellerStageFilter("premandat");
                 }}
               />
@@ -2781,7 +2750,6 @@ const handleCloseReleaseNotesTemporary = () => {
                   setCommercialFilter(
                     (isAdmin || isManager) ? dashboardCommercialFilter : "Tous"
                   );
-                  setViewMode("compact");
                 }}
               />
               <DashboardCard
@@ -2795,7 +2763,6 @@ const handleCloseReleaseNotesTemporary = () => {
                   setCommercialFilter(
                     (isAdmin || isManager) ? dashboardCommercialFilter : "Tous"
                   );
-                  setViewMode("compact");
                 }}
               />
             </div>
@@ -3210,36 +3177,16 @@ const handleCloseReleaseNotesTemporary = () => {
               </div>
 
               <div className="status-tabs">
-                <button
-                  className={
-                    "status-button" + (statusFilter === "arelancer" ? " status-button-active" : "")
-                  }
-                  onClick={() => setStatusFilter("arelancer")}
-                >
-                  À relancer
-                </button>
-                <button
-                  className={
-                    "status-button" + (statusFilter === "encours" ? " status-button-active" : "")
-                  }
-                  onClick={() => setStatusFilter("encours")}
-                >
-                  En cours
-                </button>
-                <button
-                  className={
-                    "status-button" + (statusFilter === "tous" ? " status-button-active" : "")
-                  }
-                  onClick={() => setStatusFilter("tous")}
-                >
-                  Tous
-                </button>
-                <button
-                  className={"status-button" + (statusFilter === "clos" ? " status-button-active" : "")}
-                  onClick={() => setStatusFilter("clos")}
-                >
-                  Clos
-                </button>
+                {STATUS_FILTERS.map((sf) => (
+                  <button
+                    key={sf.key}
+                    type="button"
+                    className={"status-button" + (statusFilter === sf.key ? " status-button-active" : "")}
+                    onClick={() => setStatusFilter(sf.key)}
+                  >
+                    {sf.label} <span className="status-count">{statusCounts[sf.key] ?? 0}</span>
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -3277,7 +3224,10 @@ const handleCloseReleaseNotesTemporary = () => {
                     className={
                       "tab-button" + (sellerStageFilter === "vendu" ? " tab-button-active" : "")
                     }
-                    onClick={() => setSellerStageFilter("vendu")}
+                    onClick={() => {
+                      setSellerStageFilter("vendu");
+                      setStatusFilter("clos");
+                    }}
                     type="button"
                   >
                     Vendu
@@ -3333,23 +3283,6 @@ const handleCloseReleaseNotesTemporary = () => {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
-              </div>
-
-              <div className="view-toggle">
-                <button
-                  className={"view-button" + (viewMode === "detail" ? " view-button-active" : "")}
-                  onClick={() => setViewMode("detail")}
-                  type="button"
-                >
-                  Détail
-                </button>
-                <button
-                  className={"view-button" + (viewMode === "compact" ? " view-button-active" : "")}
-                  onClick={() => setViewMode("compact")}
-                  type="button"
-                >
-                  Compact
-                </button>
               </div>
 
               <button className="btn-primary" onClick={openAddModal} type="button">

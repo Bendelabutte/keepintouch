@@ -1,5 +1,6 @@
 // src/components/ProfileModal.jsx
 import React from "react";
+import { formatPhoneInput } from "../lib/contact";
 
 export default function ProfileModal({
   showProfileModal,
@@ -93,10 +94,11 @@ export default function ProfileModal({
                 <label>
                   Téléphone
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="tel"
                     value={profileForm.phone}
                     onChange={(e) =>
-                      handleProfileFormChange("phone", e.target.value)
+                      handleProfileFormChange("phone", formatPhoneInput(e.target.value))
                     }
                   />
                 </label>

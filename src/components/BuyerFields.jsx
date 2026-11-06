@@ -5,6 +5,7 @@
 // une fiche choisie remplace la saisie libre.
 import React, { useMemo, useState } from "react";
 import { matchingClients } from "../lib/transactionDraft";
+import { emailError, formatPhone, formatPhoneInput } from "../lib/contact";
 
 const CATEGORY_LABELS = { seller: "Vendeur", buyer: "Acquéreur", after: "Après-vente" };
 const clientLabel = (c) => [c?.first_name, c?.last_name].filter(Boolean).join(" ").trim() || c?.email || "(sans nom)";
@@ -13,7 +14,7 @@ const clientMeta = (c, profileLabel) =>
     CATEGORY_LABELS[c.category] || c.category,
     c.deal_stage === "sous_promesse" ? "sous promesse" : null,
     c.status === "closed" ? "clôturée" : null,
-    c.phone,
+    formatPhone(c.phone),
     profileLabel ? profileLabel(c.owner_id) : null,
   ]
     .filter(Boolean)
@@ -57,7 +58,8 @@ export default function BuyerFields({
   const [showMore, setShowMore] = useState(
     Boolean(value?.client_birthday || value?.contact_origin || value?.context)
   );
-  const set = (k) => (e) => onChange({ ...value, [k]: e.target.value });
+  const set = (k) => (e) => onChange({ ...value, [k]: k === "phone" ? formatPhoneInput(e.target.value) : e.target.value });
+  const emailMsg = emailError(value.email);
 
   const suggestions = useMemo(
     () => (clients && onSelectClient && !selectedClient ? matchingClients(clients, value, { excludeIds }) : []),
@@ -103,9 +105,17 @@ export default function BuyerFields({
         />
       </div>
       <div style={row}>
-        <input type="tel" placeholder="Téléphone" style={fieldStyle} value={value.phone} onChange={set("phone")} />
-        <input type="email" placeholder="Email" style={fieldStyle} value={value.email} onChange={set("email")} />
+        <input type="tel" inputMode="tel" placeholder="Téléphone" style={fieldStyle} value={value.phone} onChange={set("phone")} />
+        <input
+          type="email"
+          placeholder="Email"
+          style={fieldStyle}
+          value={value.email}
+          onChange={set("email")}
+          aria-invalid={!!emailMsg}
+        />
       </div>
+      {emailMsg && <div className="field-error" style={{ textAlign: "right" }}>{emailMsg}</div>}
 
       {suggestions.length > 0 && (
         <div

@@ -73,7 +73,8 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
   };
 
   return (
-    <div style={{ position: "relative" }}>
+    // Pleine largeur : l'adresse complète reste lisible (champ et suggestions)
+    <div style={{ position: "relative", width: "100%" }}>
       <input
         type="text"
         autoComplete="off"
@@ -81,7 +82,8 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
         placeholder={placeholder}
         required={required}
         className={className}
-        style={style}
+        style={{ width: "100%", boxSizing: "border-box", ...style }}
+        title={value || undefined}
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
@@ -128,6 +130,9 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
                 padding: "7px 9px",
                 borderRadius: 8,
                 cursor: "pointer",
+                whiteSpace: "normal",
+                overflowWrap: "anywhere",
+                lineHeight: 1.35,
                 background: i === active ? "#eef2ff" : "transparent",
               }}
             >

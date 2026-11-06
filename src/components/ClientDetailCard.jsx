@@ -1,6 +1,8 @@
 // src/components/ClientDetailCard.jsx
 import React from "react";
 import { hasNoFollowUp, phaseBadgeClass, sellerPhaseActions } from "../lib/relance";
+import { closedBadgeLabel, closedDate, closedDossierDates, closureReasonLabel } from "../lib/clientStatus";
+import { formatPhone } from "../lib/contact";
 
 const PHASE_ACTION_TITLES = {
   to_mandat: "Mandat signé : relance recalculée automatiquement",
@@ -34,6 +36,9 @@ export default function ClientDetailCard({
   formatCurrency,
   onOpenClient,
   onOpenTransaction,
+  promiseDate, // dernière date de promesse connue (dates clés d'un dossier clos)
+  onAddClosedNote,
+  onReopen,
 }) {
   const name =
     (c.first_name || "") +
@@ -60,8 +65,14 @@ export default function ClientDetailCard({
     deed_signed: onSignSale,
     promise_cancelled: onCancelPromise,
   };
-  // Fiche vendue ou clôturée : ni relance, ni retard
+  // Fiche vendue ou clôturée : ni relance, ni retard, ni action ; seul le commentaire reste possible
+  const isClosed = c.status === "closed";
   const showFollowUp = c.status === "active" && !hasNoFollowUp(c);
+  const nextNote = showFollowUp && c.next_due_source !== "manual" ? c.next_due_note : "";
+  const closedBadge = closedBadgeLabel(c);
+  const keyDates = isClosed
+    ? closedDossierDates(c, { promiseDate, deedDate: soldInfo?.date || null })
+    : [];
 
   const delayStyle =
     diffDays == null
@@ -96,19 +107,26 @@ export default function ClientDetailCard({
 
           <div className="client-name-row">
             <div className="client-name">{name}</div>
-            {isSeller && <span className={sellerStageClass}>{sellerStageLabel}</span>}
-            {isBuyer && c.deal_stage === "sous_promesse" && <span className={sellerStageClass}>Sous promesse</span>}
+            {isClosed ? (
+              <span className={"closed-badge" + (closedBadge === "Vendu" ? " closed-badge-sold" : "")}>{closedBadge}</span>
+            ) : (
+              <>
+                {isSeller && <span className={sellerStageClass}>{sellerStageLabel}</span>}
+                {isBuyer && c.deal_stage === "sous_promesse" && <span className={sellerStageClass}>Sous promesse</span>}
+              </>
+            )}
           </div>
 
           {c.email && <div className="client-line">{c.email}</div>}
-          {c.phone && <div className="client-line">{c.phone}</div>}
+          {c.phone && <div className="client-line">{formatPhone(c.phone)}</div>}
         </div>
 
         <div style={{ textAlign: "right" }}>
-          {nextLabel && (
+          {showFollowUp && nextLabel && (
             <div style={{ marginTop: 6, fontSize: "0.8rem", color: "#4b5563" }}>
               {nextLabel}
               {delayLabel && <span style={delayStyle}>{delayLabel}</span>}
+              {nextNote && <div style={{ marginTop: 2, color: "#1d4ed8" }}>{nextNote}</div>}
             </div>
           )}
         </div>
@@ -120,7 +138,7 @@ export default function ClientDetailCard({
           <span className="field-value">{catLabel}</span>
         </div>
 
-        {isSeller && (
+        {isSeller && !isClosed && (
           <div className="field-row">
             <span className="field-key">Phase</span>
             <span className="field-value">{getSellerStageLabel(c)}</span>
@@ -231,6 +249,48 @@ export default function ClientDetailCard({
           </div>
         )}
 
+        {isClosed && (
+          <div className="closed-box">
+            <strong>Dossier clos{closedDate(c) ? ` le ${formatDate(closedDate(c))}` : ""}</strong>
+            <div>Motif : {closureReasonLabel(c.closure_reason || c.sale_result)}</div>
+            {soldInfo && (
+              <>
+                <div>
+                  {soldInfo.price != null && <>Prix : {formatCurrency(soldInfo.price)} · </>}
+                  {soldInfo.feesTtc != null ? (
+                    <>
+                      Honoraires : {formatCurrency(soldInfo.feesTtc)} TTC ({formatCurrency(soldInfo.feesHt)} HT)
+                    </>
+                  ) : (
+                    "Honoraires : —"
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 2 }}>
+                  {soldInfo.transactionId && (
+                    <button type="button" className="link-button" onClick={() => onOpenTransaction(soldInfo.transactionId)}>
+                      Voir la transaction →
+                    </button>
+                  )}
+                  {soldInfo.afterClient && (
+                    <button type="button" className="link-button" onClick={() => onOpenClient(soldInfo.afterClient)}>
+                      Fiche après-vente de l’acquéreur →
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+            {keyDates.length > 0 && (
+              <div className="closed-box-dates">
+                {keyDates.map((d) => (
+                  <span key={d.key}>
+                    {d.label} : <strong>{formatDate(d.date)}</strong>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ marginTop: 10 }}>
           <div
             style={{
@@ -267,7 +327,7 @@ export default function ClientDetailCard({
 
           <textarea
             rows={2}
-            placeholder="Ajouter un commentaire (ex : relancé, client en réflexion…)"
+            placeholder={isClosed ? "Ajouter une note au dossier" : "Ajouter un commentaire (ex : relancé, client en réflexion…)"}
             value={commentInputs[c.id] || ""}
             onChange={(e) => handleCommentInputChange(c.id, e.target.value)}
             style={{
@@ -326,45 +386,20 @@ export default function ClientDetailCard({
         </div>
       </div>
 
-      {isSold && (
-        <div
-          style={{
-            margin: "10px 0 4px",
-            border: "1px solid #e9d5ff",
-            background: "#faf5ff",
-            borderRadius: 12,
-            padding: 12,
-            fontSize: "0.88rem",
-            lineHeight: 1.5,
-          }}
-        >
-          <strong>Vendu{soldInfo?.date ? ` le ${formatDate(soldInfo.date)}` : ""}</strong>
-          <div>
-            {soldInfo?.price != null && <>Prix : {formatCurrency(soldInfo.price)} · </>}
-            {soldInfo?.feesTtc != null ? (
-              <>
-                Honoraires : {formatCurrency(soldInfo.feesTtc)} TTC ({formatCurrency(soldInfo.feesHt)} HT)
-              </>
-            ) : (
-              "Honoraires : —"
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 4 }}>
-            {soldInfo?.afterClient && (
-              <button type="button" className="link-button" onClick={() => onOpenClient(soldInfo.afterClient)}>
-                Fiche après-vente de l’acquéreur →
-              </button>
-            )}
-            {soldInfo?.transactionId && (
-              <button type="button" className="link-button" onClick={() => onOpenTransaction(soldInfo.transactionId)}>
-                Voir la transaction →
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       <div className="client-footer">
+        {isClosed && (
+          <>
+            <button className="btn-outline-small" onClick={() => onAddClosedNote(c)} type="button">
+              Ajouter la note
+            </button>
+            {isAdmin && (
+              <button className="btn-outline-small" onClick={() => onReopen(c)} type="button">
+                Rouvrir le dossier
+              </button>
+            )}
+          </>
+        )}
+
         {c.status === "active" && !isSold && (
           <>
             <button className="btn-outline-small" onClick={() => handleValidateRelance(c)} type="button">
@@ -391,7 +426,7 @@ export default function ClientDetailCard({
         )}
 
         {/* Sous promesse : « Acte signé » ou « Promesse annulée » ; vendue : plus aucune action */}
-        {!isPromise && !isSold && (
+        {!isClosed && !isPromise && !isSold && (
           <button className="btn-outline-small" onClick={() => openClosureModal(c)} type="button">
             Clôturer…
           </button>

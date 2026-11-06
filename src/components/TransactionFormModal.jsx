@@ -21,6 +21,7 @@ import {
 } from "../lib/transactionDraft";
 import AddressAutocomplete from "./AddressAutocomplete";
 import BuyerFields from "./BuyerFields";
+import { emailError } from "../lib/contact";
 
 const str = (v) => (v === null || v === undefined ? "" : String(v));
 
@@ -315,6 +316,7 @@ export default function TransactionFormModal({
     if (buyerRequired && !isBuyerComplete(draft.buyer)) {
       errors.push("Le prénom et le nom de l'acquéreur sont obligatoires.");
     }
+    if (emailError(draft.buyer?.email)) errors.push("Email de l'acquéreur : " + emailError(draft.buyer.email));
     if (deductionsOverFees) errors.push("Les déductions dépassent les honoraires HT.");
     if (participantErrors.length || deductionsOverFees) setShowAdvanced(true);
     errors.push(...participantErrors);

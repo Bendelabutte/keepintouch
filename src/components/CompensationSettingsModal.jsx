@@ -128,6 +128,10 @@ export default function CompensationSettingsModal({ target, onCancel, onSaved })
             <input type="checkbox" checked={form.reprice} onChange={set("reprice")} />
             Recalculer aussi les commissions déjà acquises avec ces taux
           </label>
+          <p className="admin-modal-sub" style={{ margin: "4px 0 0 22px" }}>
+            Par défaut, les ventes passées gardent les taux en vigueur au moment de l’acte. Cochez uniquement pour
+            corriger une erreur de saisie.
+          </p>
           {error && <p className="error-text" style={{ marginTop: 10 }}>{error}</p>}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
             <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>

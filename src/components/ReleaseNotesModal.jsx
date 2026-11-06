@@ -2,7 +2,28 @@
 import React from "react";
 
 // Nouveautés de la version en cours, à destination des commerciaux.
+// Version 4.0 : textes provisoires, à réécrire en fin de projet.
 const NOTES = [
+  {
+    title: "Dossiers clos",
+    text: "une fiche close ne propose plus de relance ni d’action : un encadré résume la clôture (date, motif, vente, dates clés). Vous pouvez toujours y ajouter une note.",
+  },
+  {
+    title: "Filtres « À relancer », « Tous », « Clos »",
+    text: "« Tous » (par défaut) regroupe vos fiches actives ; chaque filtre affiche son nombre de fiches.",
+  },
+  {
+    title: "Liste compacte",
+    text: "un clic sur une ligne la déplie, un second clic la replie.",
+  },
+  {
+    title: "Date de l’estimation",
+    text: "la 1re relance d’une nouvelle fiche vendeur est fixée au lendemain de l’estimation, pour l’envoyer.",
+  },
+  {
+    title: "Téléphone et email",
+    text: "le téléphone se met en forme tout seul (06 77 66 55 44) et un email mal saisi est signalé avant l’enregistrement.",
+  },
   {
     title: "Nouvelle page Transactions",
     text: "toutes vos ventes et locations au même endroit, avec votre part de chaque honoraire.",

@@ -362,6 +362,80 @@ export const baseCss = `
     border-color: #d1d5db;
   }
 
+  /* Dossier clos : ligne grisée, badge « Clos » / « Vendu » */
+  .compact-row-closed {
+    background: #f3f4f6;
+    border-color: #e5e7eb;
+    box-shadow: none;
+  }
+
+  .compact-row-closed .compact-name,
+  .compact-row-closed .compact-row-line2 {
+    color: #6b7280;
+  }
+
+  .closed-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #e5e7eb;
+    color: #374151;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .closed-badge-sold {
+    background: #f3e8ff;
+    color: #6b21a8;
+  }
+
+  .closed-box {
+    margin: 10px 0 4px;
+    border: 1px solid #e5e7eb;
+    background: #f9fafb;
+    border-radius: 12px;
+    padding: 12px;
+    font-size: 0.88rem;
+    line-height: 1.5;
+  }
+
+  .closed-box-dates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 6px;
+    color: #4b5563;
+  }
+
+  .field-error {
+    display: block;
+    margin-top: 4px;
+    color: #b91c1c;
+    font-size: 0.78rem;
+    font-weight: 400;
+  }
+
+  .field-hint {
+    display: block;
+    margin-top: 4px;
+    color: #6b7280;
+    font-size: 0.78rem;
+    font-weight: 400;
+  }
+
+  .status-count {
+    display: inline-block;
+    min-width: 18px;
+    margin-left: 4px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.08);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-align: center;
+  }
+
   .compact-row-click {
     width: 100%;
     text-align: left;

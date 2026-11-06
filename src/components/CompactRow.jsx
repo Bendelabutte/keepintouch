@@ -2,6 +2,7 @@
 import React from "react";
 import DelayPill from "./DelayPill";
 import { phaseBadgeClass } from "../lib/relance";
+import { closedBadgeLabel, closedDate, closureReasonLabel } from "../lib/clientStatus";
 
 export default function CompactRow({
   client,
@@ -36,10 +37,26 @@ export default function CompactRow({
   const sellerStageLabel = isSeller ? getSellerStageLabel(client) : "";
   const sellerStageClass = phaseBadgeClass(client.deal_stage);
 
+  // Dossier clos : ligne grisée, badge « Clos » / « Vendu », ni retard ni prochaine relance
+  const isClosed = client.status === "closed";
+  const closedBadge = closedBadgeLabel(client);
+
   const isMobile =
     typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
 
   const leftLine2 = (() => {
+    if (isClosed) {
+      const where = client.category === "seller" ? client.property_address : client.category === "after" ? client.after_address : client.area;
+      const when = closedDate(client);
+      return [
+        where ? (client.category === "buyer" ? `Secteur : ${where}` : `Adresse : ${where}`) : null,
+        `Clos le ${when ? formatDate(when) : "—"}`,
+        closureReasonLabel(client.closure_reason || client.sale_result),
+      ]
+        .filter(Boolean)
+        .join("  •  ");
+    }
+
     if (client.category === "seller") {
       const addr = client.property_address ? client.property_address : "—";
       const est = client.estimation_date ? formatDate(client.estimation_date) : "—";
@@ -87,7 +104,7 @@ export default function CompactRow({
   })();
 
   return (
-    <div className={"compact-row" + (isExpanded ? " compact-row-expanded" : "")}>
+    <div className={"compact-row" + (isExpanded ? " compact-row-expanded" : "") + (isClosed ? " compact-row-closed" : "")}>
       <button
         className="compact-row-click"
         onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
@@ -98,8 +115,11 @@ export default function CompactRow({
           <div className="compact-row-line1">
             <span className="compact-name">{name}</span>
 
-            {isSeller && <span className={sellerStageClass}>{sellerStageLabel}</span>}
-            {client.category === "buyer" && client.deal_stage === "sous_promesse" && (
+            {isClosed && (
+              <span className={"closed-badge" + (closedBadge === "Vendu" ? " closed-badge-sold" : "")}>{closedBadge}</span>
+            )}
+            {!isClosed && isSeller && <span className={sellerStageClass}>{sellerStageLabel}</span>}
+            {!isClosed && client.category === "buyer" && client.deal_stage === "sous_promesse" && (
               <span className={sellerStageClass}>Sous promesse</span>
             )}
 
@@ -118,7 +138,7 @@ export default function CompactRow({
         </div>
 
         <div className="compact-row-right">
-          <DelayPill diffDays={diffDays} delayLabel={delayLabel} />
+          {!isClosed && <DelayPill diffDays={diffDays} delayLabel={delayLabel} />}
           <span className="chev">{isExpanded ? "▲" : "▼"}</span>
         </div>
       </button>

@@ -3,6 +3,7 @@
 // Le formulaire n'expose qu'une date : vente → date de promesse OU date de vente ; location → date du bail.
 // Statut et date d'encaissement sont dérivés à l'enregistrement (applyDerivedFields).
 import { DEFAULT_VAT_RATE, applyDerivedFields, defaultShares } from "./transactions";
+import { formatPhone, normalizePhone } from "./contact";
 
 let keySeq = 0;
 export const newRowKey = () => `row-${Date.now()}-${keySeq++}`;
@@ -38,13 +39,19 @@ export const BUYER_FIELDS = Object.freeze([
 
 export const emptyBuyer = () => Object.fromEntries(BUYER_FIELDS.map((k) => [k, ""]));
 
-export const buyerFromData = (data) => ({ ...emptyBuyer(), ...Object.fromEntries(BUYER_FIELDS.map((k) => [k, str(data?.[k])])) });
+// Téléphone affiché par paires dans le formulaire, normalisé à l'enregistrement (buyerPayload).
+export const buyerFromData = (data) => ({
+  ...emptyBuyer(),
+  ...Object.fromEntries(BUYER_FIELDS.map((k) => [k, k === "phone" ? formatPhone(data?.[k]) : str(data?.[k])])),
+});
 
 export const isBuyerComplete = (b) => str(b?.first_name).trim() !== "" && str(b?.last_name).trim() !== "";
 
 // Bloc acquéreur → charge utile des RPC (champs vides retirés).
 export const buyerPayload = (b) =>
-  Object.fromEntries(BUYER_FIELDS.map((k) => [k, str(b?.[k]).trim()]).filter(([, v]) => v !== ""));
+  Object.fromEntries(
+    BUYER_FIELDS.map((k) => [k, k === "phone" ? normalizePhone(b?.[k]) : str(b?.[k]).trim()]).filter(([, v]) => v !== "")
+  );
 
 export const emptyTransactionDraft = ({ kind = "sale", userId = null } = {}) => ({
   id: null,

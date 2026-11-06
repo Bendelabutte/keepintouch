@@ -1,6 +1,6 @@
 // src/lib/relance.js
 // Délais de relance par catégorie : valeurs par défaut uniques et conversions app_settings.
-import { addDaysToDate } from "./dates";
+import { addDaysToDate, parseDateStr } from "./dates";
 
 export const RELANCE_DEFAULTS = Object.freeze({
   seller: Object.freeze({ initial_days: 15, default_next_days: 21 }),
@@ -160,4 +160,23 @@ export const sellerPhaseActions = (client) => {
     default:
       return [];
   }
+};
+
+// --- Première relance à la création d'une fiche ---
+// Vendeur avec date d'estimation : lendemain de l'estimation, note « Envoyer l'estimation » ; une fois
+// cette relance validée, la suivante suit le délai par défaut vendeur (validation normale).
+// Sinon : date de référence de la catégorie (enregistrement acquéreur, vente après-vente, ou
+// aujourd'hui) + 1re relance de la catégorie.
+export const ESTIMATION_FOLLOWUP_NOTE = "Envoyer l’estimation";
+
+export const initialFollowUp = (client, config, today = new Date()) => {
+  const cat = normalizeCategory(client?.category);
+  if (cat === "seller" && parseDateStr(client?.estimation_date)) {
+    return { next_due_date: addDaysToDate(client.estimation_date, 1), next_due_note: ESTIMATION_FOLLOWUP_NOTE };
+  }
+  const base =
+    (cat === "buyer" && parseDateStr(client?.acquisition_date)) ||
+    (cat === "after" && parseDateStr(client?.created_at)) ||
+    today;
+  return { next_due_date: addDaysToDate(base, resolveRelanceCfg(config, cat).initial_days), next_due_note: null };
 };
