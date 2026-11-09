@@ -122,22 +122,31 @@ export const participantAmount = (netFees, sharePct) => round2((toNumber(netFees
 
 export const isCancelled = (t) => t?.status === "cancelled";
 
-// Vente actée ou location signée (« signed » : reprise historique) : modifiable par l'admin seul,
-// validée ou non. Même règle que la base (can_edit_transaction).
+// Vente actée ou location signée (« signed » : reprise historique).
 export const isActedTransaction = (t) => t?.status === "cashed" || t?.status === "signed";
 
-export const ACTED_LOCK_MESSAGE = "Vente actée : modification réservée à l’administrateur";
+// Verrouillage : c'est la VALIDATION par l'admin qui verrouille (même règle que la base,
+// can_edit_transaction). Promesse, vente actée ou location : modifiable tant qu'elle n'est pas validée.
+export const isValidated = (t) => Boolean(t?.validated_at);
 
-// Admin toujours ; créateur ou participant tant que la transaction n'est ni validée ni actée
+export const VALIDATED_LOCK_MESSAGE = "Validée par l’administrateur : modification réservée à l’administrateur";
+
+// Seule une transaction actée ou louée se valide, jamais une promesse (même règle que validate_transaction).
+export const canBeValidated = (t) => !!t && isActedTransaction(t) && !isValidated(t);
+
+// Badge d'information, visible par tous : « Validée », ou « À valider » sur une vente actée ou une
+// location non validée ; promesse et transaction annulée : aucun badge.
+export const validationLabel = (t) => (isCancelled(t) ? null : isValidated(t) ? "Validée" : canBeValidated(t) ? "À valider" : null);
+
+// Admin toujours ; créateur ou participant tant que la transaction n'est pas validée
 export const canEditTransaction = (t, userId, isAdmin) =>
   !!isAdmin ||
-  (!!t &&
-    !t.validated_at &&
-    !isActedTransaction(t) &&
-    (t.created_by === userId || (t.participants || []).some((p) => p.user_id === userId)));
+  (!!t && !isValidated(t) && (t.created_by === userId || (t.participants || []).some((p) => p.user_id === userId)));
 
-export const canDeleteTransaction = (t, userId, isAdmin) =>
-  !!isAdmin || (!!t && t.created_by === userId && !t.validated_at && !isActedTransaction(t));
+export const canDeleteTransaction = (t, userId, isAdmin) => !!isAdmin || (!!t && t.created_by === userId && !isValidated(t));
+
+// Filtre « À valider » et bouton « Valider » (admin) : ventes actées et locations non validées
+export const isAwaitingValidation = canBeValidated;
 
 const hasDate = (v) => v !== null && v !== undefined && String(v).trim() !== "";
 

@@ -1,15 +1,14 @@
 import React, { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { cx, focusRing } from "./cx";
-import Icon from "./Icon";
 
 const widths = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-3xl", xl: "max-w-5xl" };
 
 /**
- * Fenêtre modale : rendue dans <body>, Échap et clic sur le fond ferment (sauf pendant un
- * enregistrement), focus placé dans la fenêtre puis rendu à l'élément d'origine, défilement de la
- * page bloqué. Le contenu n'est monté que lorsque la fenêtre est ouverte.
- * footer : actions alignées à droite, séparées du contenu par un filet.
+ * Fenêtre modale (Bien EDL) : rendue dans <body>, Échap et clic sur le fond ferment (sauf pendant
+ * un enregistrement), focus piégé dans la fenêtre puis rendu à l'élément d'origine, défilement de
+ * la page bloqué. Le contenu n'est monté que lorsque la fenêtre est ouverte.
+ * footer : actions alignées à droite, sous un filet.
  */
 export default function Modal({ open, title, description, size = "md", busy = false, onClose, footer, children }) {
   const panelRef = useRef(null);
@@ -32,7 +31,11 @@ export default function Modal({ open, title, description, size = "md", busy = fa
         onClose?.();
       }
       if (e.key === "Tab" && panel) {
-        const items = [...panel.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
+        const items = [
+          ...panel.querySelectorAll(
+            "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+          ),
+        ];
         if (!items.length) return;
         const firstItem = items[0];
         const lastItem = items[items.length - 1];
@@ -58,7 +61,7 @@ export default function Modal({ open, title, description, size = "md", busy = fa
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-[2px] sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose?.();
       }}
@@ -70,14 +73,13 @@ export default function Modal({ open, title, description, size = "md", busy = fa
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cx(
-          "flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-card border border-line bg-surface text-ink shadow-pop outline-none sm:rounded-card",
-          "animate-[kit-fade-in_150ms_ease-out]",
+          "flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-card border border-line bg-surface text-ink shadow-xl outline-none",
           widths[size] || widths.md
         )}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4 sm:px-6">
+        <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
           <div className="min-w-0">
-            <h2 id={titleId} className="text-lg font-bold text-ink">
+            <h2 id={titleId} className="font-display text-xl font-semibold">
               {title}
             </h2>
             {description && <div className="mt-1 text-sm text-ink-muted">{description}</div>}
@@ -89,19 +91,15 @@ export default function Modal({ open, title, description, size = "md", busy = fa
             disabled={busy}
             aria-label="Fermer"
             className={cx(
-              "-mr-2 flex size-9 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-subtle hover:text-ink disabled:opacity-50",
+              "-mr-2 flex size-11 shrink-0 items-center justify-center rounded-full text-xl text-ink-muted hover:bg-canvas disabled:opacity-50",
               focusRing
             )}
           >
-            <Icon name="close" />
+            <span aria-hidden="true">×</span>
           </button>
         </div>
-        <div className="overflow-y-auto px-5 py-5 sm:px-6">{children}</div>
-        {footer && (
-          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line bg-subtle/60 px-5 py-3 sm:px-6">
-            {footer}
-          </div>
-        )}
+        <div className="overflow-y-auto px-6 py-5">{children}</div>
+        {footer && <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line px-6 py-4">{footer}</div>}
       </div>
     </div>,
     document.body

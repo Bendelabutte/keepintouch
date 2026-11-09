@@ -16,6 +16,7 @@ export const CLOSURE_REASON_LABELS = Object.freeze({
   ne_repond_plus: "Ne répond plus",
   suivi_termine: "Suivi après-vente terminé",
   ne_souhaite_plus: "Ne souhaite plus de suivi",
+  vente_annulee: "Vente annulée",
 });
 
 export const closureReasonLabel = (reason) =>

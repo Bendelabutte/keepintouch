@@ -5,11 +5,12 @@ import { normalizePhase, PHASE_LABELS } from "../lib/relance";
 import { closedBadgeLabel, closedDate, closureReasonLabel } from "../lib/clientStatus";
 import { Badge, Icon, cx, focusRing } from "./ui";
 
-const PHASE_TONES = { pre_mandat: "neutral", mandat: "primary", sous_promesse: "warning", vendu: "success" };
+// Couleurs de phase historiques de Keepintouch
+const PHASE_TONES = { pre_mandat: "premandat", mandat: "mandat", sous_promesse: "promesse", vendu: "vendu" };
 
 export function DelayBadge({ diffDays, delayLabel }) {
   if (diffDays === null || diffDays === undefined || !delayLabel) return null;
-  return <Badge tone={diffDays < 0 ? "danger" : diffDays === 0 ? "accent" : "info"}>{delayLabel}</Badge>;
+  return <Badge tone={diffDays < 0 ? "danger" : "info"}>{delayLabel}</Badge>;
 }
 
 export default function CompactRow({
@@ -61,33 +62,39 @@ export default function CompactRow({
   })().filter(Boolean);
 
   return (
-    <div
+    // Carte indépendante ; dépliée : contour de la couleur principale, ombre plus marquée, en-tête teinté
+    <li
       className={cx(
-        "overflow-hidden rounded-card border shadow-card transition-colors duration-150",
-        isClosed ? "border-line bg-subtle/70" : "border-line bg-surface",
-        isExpanded && "border-primary-line ring-1 ring-primary-line"
+        "overflow-hidden rounded-card border bg-surface transition",
+        isExpanded ? "border-primary shadow-md" : "border-line shadow-card hover:border-line-strong",
+        isClosed && !isExpanded && "bg-canvas/60"
       )}
     >
       <button
         type="button"
         aria-expanded={isExpanded}
         onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
-        className={cx("flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-primary-soft/40", focusRing, "focus-visible:-outline-offset-2")}
+        className={cx(
+          "flex w-full items-center gap-4 px-4 py-3.5 text-left transition sm:px-5",
+          isExpanded ? "bg-accent-soft/70" : "hover:bg-canvas/60",
+          focusRing,
+          "focus-visible:-outline-offset-2"
+        )}
       >
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className={cx("font-semibold", isClosed ? "text-ink-muted" : "text-ink")}>{name}</span>
             {isClosed ? (
-              <Badge tone={closedBadge === "Vendu" ? "success" : "muted"}>{closedBadge}</Badge>
+              <Badge tone={closedBadge === "Vendu" ? "vendu" : "clos"}>{closedBadge}</Badge>
             ) : (
               <>
                 {cat === "seller" && <Badge tone={PHASE_TONES[phase]}>{PHASE_LABELS[phase]}</Badge>}
-                {cat === "buyer" && client.deal_stage === "sous_promesse" && <Badge tone="warning">Sous promesse</Badge>}
+                {cat === "buyer" && client.deal_stage === "sous_promesse" && <Badge tone="promesse">Sous promesse</Badge>}
               </>
             )}
-            {(isAdmin || isManager) && <span className="truncate text-xs text-ink-muted">{getCommercialEmail(client.owner_id) || "—"}</span>}
+            {(isAdmin || isManager) && <span className="truncate text-sm text-ink-muted">{getCommercialEmail(client.owner_id) || "—"}</span>}
           </div>
-          <div className="tabular mt-0.5 truncate text-xs text-ink-muted" title={details.join(" · ")}>
+          <div className="tabular mt-1 truncate text-sm text-ink-muted" title={details.join(" · ")}>
             {details.join("  ·  ")}
           </div>
         </div>
@@ -97,7 +104,7 @@ export default function CompactRow({
         </div>
       </button>
 
-      {isExpanded && <div className="border-t border-line bg-canvas/60 p-3 sm:p-4">{renderClientDetailCard(client)}</div>}
-    </div>
+      {isExpanded && <div className="border-t border-line px-4 py-5 sm:px-5">{renderClientDetailCard(client)}</div>}
+    </li>
   );
 }

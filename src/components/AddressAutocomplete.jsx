@@ -2,6 +2,7 @@
 // Champ adresse avec suggestions Géoplateforme IGN. La saisie libre reste toujours possible :
 // une erreur réseau ou une adresse introuvable ne bloque rien.
 import React, { useEffect, useRef, useState } from "react";
+import { controlClasses, cx } from "./ui";
 import { ADDRESS_MIN_CHARS, buildAddressSearchUrl, mapAddressResponse } from "../lib/address";
 
 const DEBOUNCE_MS = 300;
@@ -74,15 +75,15 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
 
   return (
     // Pleine largeur : l'adresse complète reste lisible (champ et suggestions)
-    <div style={{ position: "relative", width: "100%" }}>
+    <div className="relative w-full">
       <input
         type="text"
         autoComplete="off"
         value={value || ""}
         placeholder={placeholder}
         required={required}
-        className={className}
-        style={{ width: "100%", boxSizing: "border-box", ...style }}
+        className={cx(controlClasses(false), className)}
+        style={style}
         title={value || undefined}
         role="combobox"
         aria-expanded={open}
@@ -96,25 +97,7 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
         onBlur={() => setOpen(false)}
       />
       {open && suggestions.length > 0 && (
-        <ul
-          role="listbox"
-          style={{
-            position: "absolute",
-            zIndex: 60,
-            left: 0,
-            right: 0,
-            top: "100%",
-            margin: "2px 0 0",
-            padding: 4,
-            listStyle: "none",
-            background: "var(--color-surface)",
-            border: "1px solid var(--color-line-strong)",
-            borderRadius: 10,
-            boxShadow: "0 8px 20px rgba(0,0,0,0.12)",
-            fontSize: "0.9rem",
-            fontWeight: 400,
-          }}
-        >
+        <ul role="listbox" className="absolute inset-x-0 top-full z-[60] mt-1 rounded-control border border-line bg-surface p-1.5 text-base font-normal shadow-lg">
           {suggestions.map((s, i) => (
             <li
               key={`${s.label}-${i}`}
@@ -126,15 +109,10 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
                 choose(s);
               }}
               onMouseEnter={() => setActive(i)}
-              style={{
-                padding: "7px 9px",
-                borderRadius: 8,
-                cursor: "pointer",
-                whiteSpace: "normal",
-                overflowWrap: "anywhere",
-                lineHeight: 1.35,
-                background: i === active ? "var(--color-primary-soft)" : "transparent",
-              }}
+              className={cx(
+                "cursor-pointer rounded-lg px-3 py-2.5 leading-snug break-words",
+                i === active ? "bg-accent-soft text-accent" : "text-ink"
+              )}
             >
               {s.label}
             </li>

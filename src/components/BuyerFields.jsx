@@ -6,6 +6,7 @@
 import React, { useMemo, useState } from "react";
 import { matchingClients } from "../lib/transactionDraft";
 import { emailError, formatPhone, formatPhoneInput } from "../lib/contact";
+import { Button, Field, Icon, Input, Textarea, cx, focusRing } from "./ui";
 
 const CATEGORY_LABELS = { seller: "Vendeur", buyer: "Acquéreur", after: "Après-vente" };
 const clientLabel = (c) => [c?.first_name, c?.last_name].filter(Boolean).join(" ").trim() || c?.email || "(sans nom)";
@@ -19,31 +20,6 @@ const clientMeta = (c, profileLabel) =>
   ]
     .filter(Boolean)
     .join(" · ");
-
-const cardStyle = {
-  marginTop: 6,
-  border: "1px solid var(--color-primary-line)",
-  background: "var(--color-primary-soft)",
-  borderRadius: 10,
-  padding: "8px 10px",
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 8,
-  flexWrap: "wrap",
-};
-
-const fieldStyle = {
-  width: "100%",
-  padding: "9px 11px",
-  border: "1px solid var(--color-line-strong)",
-  borderRadius: 10,
-  fontSize: "0.92rem",
-  background: "var(--color-surface)",
-  boxSizing: "border-box",
-  marginTop: 4,
-};
-const row = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 };
 
 export default function BuyerFields({
   value,
@@ -68,64 +44,34 @@ export default function BuyerFields({
 
   if (selectedClient) {
     return (
-      <div style={{ fontWeight: 400 }}>
-        <div style={cardStyle}>
-          <span>
-            <strong>{clientLabel(selectedClient)}</strong>
-            <span style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}> · {clientMeta(selectedClient, profileLabel)}</span>
-          </span>
-          {onSelectClient && (
-            <button type="button" className="btn-outline-small" onClick={() => onSelectClient(null)}>
-              Changer
-            </button>
-          )}
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-accent/20 bg-accent-soft px-4 py-3">
+        <span className="min-w-0 text-sm">
+          <strong className="text-ink">{clientLabel(selectedClient)}</strong>
+          <span className="text-ink-muted"> · {clientMeta(selectedClient, profileLabel)}</span>
+        </span>
+        {onSelectClient && (
+          <Button variant="secondary" size="xs" onClick={() => onSelectClient(null)}>
+            Changer
+          </Button>
+        )}
       </div>
     );
   }
 
   return (
-    <div style={{ fontWeight: 400 }}>
-      <div style={row}>
-        <input
-          type="text"
-          aria-label="Prénom de l'acquéreur"
-          placeholder={required ? "Prénom *" : "Prénom"}
-          style={fieldStyle}
-          value={value.first_name}
-          onChange={set("first_name")}
-        />
-        <input
-          type="text"
-          aria-label="Nom de l'acquéreur"
-          placeholder={required ? "Nom *" : "Nom"}
-          style={fieldStyle}
-          value={value.last_name}
-          onChange={set("last_name")}
-        />
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Input aria-label="Prénom de l'acquéreur" placeholder={required ? "Prénom *" : "Prénom"} value={value.first_name} onChange={set("first_name")} />
+        <Input aria-label="Nom de l'acquéreur" placeholder={required ? "Nom *" : "Nom"} value={value.last_name} onChange={set("last_name")} />
+        <Input type="tel" inputMode="tel" aria-label="Téléphone de l'acquéreur" placeholder="Téléphone" value={value.phone} onChange={set("phone")} />
+        <Field error={emailMsg}>
+          <Input type="email" aria-label="Email de l'acquéreur" placeholder="Email" value={value.email} onChange={set("email")} />
+        </Field>
       </div>
-      <div style={row}>
-        <input type="tel" inputMode="tel" placeholder="Téléphone" style={fieldStyle} value={value.phone} onChange={set("phone")} />
-        <input
-          type="email"
-          placeholder="Email"
-          style={fieldStyle}
-          value={value.email}
-          onChange={set("email")}
-          aria-invalid={!!emailMsg}
-        />
-      </div>
-      {emailMsg && <div className="field-error" style={{ textAlign: "right" }}>{emailMsg}</div>}
 
       {suggestions.length > 0 && (
-        <div
-          role="listbox"
-          aria-label="Fiches existantes correspondantes"
-          style={{ marginTop: 6, border: "1px solid var(--color-line)", borderRadius: 10, background: "var(--color-surface)", overflow: "hidden" }}
-        >
-          <div style={{ fontSize: "0.78rem", color: "var(--color-ink-muted)", padding: "6px 10px", background: "var(--color-subtle)" }}>
-            Fiche déjà existante ? Choisissez-la pour éviter un doublon.
-          </div>
+        <div role="listbox" aria-label="Fiches existantes correspondantes" className="overflow-hidden rounded-control border border-line bg-surface">
+          <div className="bg-subtle px-4 py-2 text-sm text-ink-muted">Fiche déjà existante ? Choisissez-la pour éviter un doublon.</div>
           {suggestions.map((c) => (
             <button
               key={c.id}
@@ -133,20 +79,10 @@ export default function BuyerFields({
               role="option"
               aria-selected={false}
               onClick={() => onSelectClient(c)}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "7px 10px",
-                border: "none",
-                borderTop: "1px solid var(--color-line)",
-                background: "var(--color-surface)",
-                cursor: "pointer",
-                fontSize: "0.86rem",
-              }}
+              className={cx("block min-h-11 w-full border-t border-line px-4 py-2 text-left text-sm transition hover:bg-canvas", focusRing)}
             >
-              <strong>{clientLabel(c)}</strong>
-              <span style={{ color: "var(--color-ink-muted)" }}> · {clientMeta(c, profileLabel)}</span>
+              <strong className="text-ink">{clientLabel(c)}</strong>
+              <span className="text-ink-muted"> · {clientMeta(c, profileLabel)}</span>
             </button>
           ))}
         </div>
@@ -154,41 +90,25 @@ export default function BuyerFields({
 
       <button
         type="button"
-        className="btn-outline-small"
-        style={{ marginTop: 8 }}
+        aria-expanded={showMore}
         onClick={() => setShowMore((v) => !v)}
+        className={cx("inline-flex min-h-11 items-center gap-1.5 rounded-control text-sm font-semibold text-ink-muted hover:text-ink", focusRing)}
       >
-        {showMore ? "▾" : "▸"} Plus d'infos
+        <Icon name="chevronDown" size={16} className={cx("transition-transform", showMore && "rotate-180")} />
+        Plus d’infos
       </button>
 
       {showMore && (
-        <div style={{ marginTop: 6 }}>
-          <div style={row}>
-            <label style={{ fontSize: "0.82rem" }}>
-              Anniversaire
-              <input type="date" style={fieldStyle} value={value.client_birthday} onChange={set("client_birthday")} />
-            </label>
-            <label style={{ fontSize: "0.82rem" }}>
-              Origine du contact
-              <input
-                type="text"
-                placeholder="vitrine, recommandation, portail…"
-                style={fieldStyle}
-                value={value.contact_origin}
-                onChange={set("contact_origin")}
-              />
-            </label>
-          </div>
-          <label style={{ fontSize: "0.82rem", display: "block", marginTop: 6 }}>
-            Contexte
-            <textarea
-              rows={2}
-              placeholder="travaux, emménagement, financement…"
-              style={{ ...fieldStyle, resize: "vertical" }}
-              value={value.context}
-              onChange={set("context")}
-            />
-          </label>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Anniversaire">
+            <Input type="date" value={value.client_birthday} onChange={set("client_birthday")} />
+          </Field>
+          <Field label="Origine du contact">
+            <Input placeholder="vitrine, recommandation, portail…" value={value.contact_origin} onChange={set("contact_origin")} />
+          </Field>
+          <Field label="Contexte" className="sm:col-span-2">
+            <Textarea rows={2} placeholder="travaux, emménagement, financement…" value={value.context} onChange={set("context")} />
+          </Field>
         </div>
       )}
     </div>

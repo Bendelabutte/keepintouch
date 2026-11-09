@@ -20,6 +20,9 @@ import {
   canEditTransaction,
   canDeleteTransaction,
   isActedTransaction,
+  isAwaitingValidation,
+  canBeValidated,
+  validationLabel,
 } from "../transactions";
 import {
   buyerFromClient,
@@ -32,6 +35,8 @@ import {
   isBuyerComplete,
   splitPersonName,
   transactionToDraft,
+  signSaleForm,
+  signSaleParams,
 } from "../transactionDraft";
 
 const shares = (list) => defaultShares(list).map((p) => p.share_pct);
@@ -563,27 +568,31 @@ describe("acquéreur existant", () => {
   });
 });
 
-describe("verrouillage des ventes actées", () => {
+describe("verrouillage par la validation de l'admin", () => {
   const me = "u1";
   const base = { created_by: me, validated_at: null, participants: [{ user_id: me }] };
-  const promise = { ...base, status: "in_progress" };
-  const acted = { ...base, status: "cashed" };
+  const states = [
+    { ...base, status: "in_progress" },
+    { ...base, status: "cashed" },
+    { ...base, kind: "rental", status: "cashed" },
+    { ...base, status: "signed" },
+  ];
 
-  it("une promesse non validée reste modifiable par le créateur et les participants", () => {
-    expect(canEditTransaction(promise, me, false)).toBe(true);
-    expect(canEditTransaction({ ...promise, created_by: "u2" }, me, false)).toBe(true);
-    expect(canEditTransaction(promise, "u3", false)).toBe(false);
-    expect(canDeleteTransaction(promise, me, false)).toBe(true);
+  it("non validée (promesse, actée ou louée) : modifiable par le créateur et les participants", () => {
+    for (const t of states) {
+      expect(canEditTransaction(t, me, false)).toBe(true);
+      expect(canEditTransaction({ ...t, created_by: "u2" }, me, false)).toBe(true);
+      expect(canDeleteTransaction(t, me, false)).toBe(true);
+    }
   });
 
-  it("une promesse validée n'est plus modifiable par un non-admin", () => {
-    expect(canEditTransaction({ ...promise, validated_at: "2026-10-01" }, me, false)).toBe(false);
+  it("non validée : ni modifiable ni supprimable par un commercial étranger à la transaction", () => {
+    expect(canEditTransaction(states[1], "u3", false)).toBe(false);
+    expect(canDeleteTransaction({ ...states[1], created_by: "u2" }, me, false)).toBe(false);
   });
 
-  it("une vente actée ou une location signée, validée ou non, est réservée à l'admin", () => {
-    const cases = [acted, { ...acted, validated_at: "2026-10-01" }, { ...acted, kind: "rental" }, { ...base, status: "signed" }];
-    for (const t of cases) {
-      expect(isActedTransaction(t)).toBe(true);
+  it("validée : réservée à l'admin, quel que soit son état", () => {
+    for (const t of states.map((x) => ({ ...x, validated_at: "2026-11-01T10:00:00Z" }))) {
       expect(canEditTransaction(t, me, false)).toBe(false);
       expect(canDeleteTransaction(t, me, false)).toBe(false);
       expect(canEditTransaction(t, me, true)).toBe(true);
@@ -591,9 +600,60 @@ describe("verrouillage des ventes actées", () => {
     }
   });
 
-  it("une promesse ou une transaction annulée n'est pas une vente actée", () => {
-    expect(isActedTransaction(promise)).toBe(false);
-    expect(isActedTransaction({ status: "cancelled" })).toBe(false);
-    expect(isActedTransaction(null)).toBe(false);
+  it("badge Validée / À valider et filtre « À valider » : ventes actées et locations seulement", () => {
+    expect(validationLabel(states[1])).toBe("À valider");
+    expect(validationLabel(states[2])).toBe("À valider");
+    expect(validationLabel(states[3])).toBe("À valider");
+    expect(validationLabel({ ...states[1], validated_at: "2026-11-01" })).toBe("Validée");
+    expect(validationLabel({ status: "cancelled" })).toBeNull();
+    expect(isAwaitingValidation(states[1])).toBe(true);
+    expect(isAwaitingValidation(states[2])).toBe(true);
+    expect(isAwaitingValidation({ ...states[1], validated_at: "2026-11-01" })).toBe(false);
+    expect(isAwaitingValidation({ status: "cancelled" })).toBe(false);
+    expect(isActedTransaction(states[1])).toBe(true);
+    expect(isActedTransaction(states[0])).toBe(false);
+  });
+
+  it("une promesse ne se valide jamais : ni badge « À valider », ni filtre", () => {
+    expect(validationLabel(states[0])).toBeNull();
+    expect(isAwaitingValidation(states[0])).toBe(false);
+    expect(canBeValidated(states[0])).toBe(false);
+    expect(canBeValidated(states[1])).toBe(true);
+  });
+
+  it("le CA compte une vente actée dès sa saisie, validée ou non", () => {
+    const tx = { kind: "sale", status: "cashed", fees_ttc: 12000, vat_rate: 20, fees_received_at: "2026-06-30", validated_at: null, participants: [{ user_id: me, side: "entree", share_pct: 100 }], deductions: [] };
+    expect(caByUser([tx])).toEqual({ [me]: 10000 });
+    expect(caByUser([{ ...tx, validated_at: "2026-07-01" }])).toEqual({ [me]: 10000 });
+  });
+});
+
+describe("acte signé : montants confirmés à l'acte", () => {
+  const promise = { price: 350000, fees_ttc: 15000 };
+
+  it("pré-remplit le prix et les honoraires de la promesse", () => {
+    expect(signSaleForm(promise, "2026-11-08")).toEqual({ date: "2026-11-08", price: "350000", fees_ttc: "15000" });
+    expect(signSaleForm({}, "2026-11-08")).toEqual({ date: "2026-11-08", price: "", fees_ttc: "" });
+  });
+
+  it("confirmation en un clic : mêmes montants envoyés avec l'acte", () => {
+    expect(signSaleParams(signSaleForm(promise, "2026-11-08"))).toEqual({
+      params: { p_deed_date: "2026-11-08", p_price: 350000, p_fees_ttc: 15000 },
+    });
+  });
+
+  it("correction à l'acte : nouveaux montants dans le même appel", () => {
+    expect(signSaleParams({ date: "2026-11-08", price: "340 000", fees_ttc: "14500,50" }).params).toEqual({
+      p_deed_date: "2026-11-08",
+      p_price: 340000,
+      p_fees_ttc: 14500.5,
+    });
+  });
+
+  it("refuse une date ou des honoraires manquants, un prix invalide", () => {
+    expect(signSaleParams({ date: "", fees_ttc: "1000" }).error).toBeTruthy();
+    expect(signSaleParams({ date: "2026-11-08", fees_ttc: "" }).error).toBeTruthy();
+    expect(signSaleParams({ date: "2026-11-08", price: "abc", fees_ttc: "1000" }).error).toBeTruthy();
+    expect(signSaleParams({ date: "2026-11-08", price: "", fees_ttc: "1000" }).params.p_price).toBeNull();
   });
 });

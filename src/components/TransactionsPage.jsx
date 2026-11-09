@@ -1,5 +1,5 @@
 // src/components/TransactionsPage.jsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { supabase } from "../supabaseClient";
 import { transactionPath } from "../lib/routes";
@@ -9,7 +9,7 @@ import {
   SIDE_LABELS,
   TRANSACTION_KIND_LABELS,
   DISPLAY_STATUS_LABELS,
-  ACTED_LOCK_MESSAGE,
+  VALIDATED_LOCK_MESSAGE,
   canDeleteTransaction,
   canEditTransaction,
   deductionsTotal,
@@ -17,7 +17,9 @@ import {
   groupParticipantsByUser,
   participantsVisibleTo,
   pendingStats,
-  isActedTransaction,
+  isAwaitingValidation,
+  isValidated,
+  validationLabel,
   isCancelled,
   netFeesHt,
   participantAmount,
@@ -25,18 +27,8 @@ import {
   transactionFeesHt,
 } from "../lib/transactions";
 import { DeductionAddForm, FeesBreakdown } from "./TransactionFormModal";
-
-const cell = { padding: "8px 10px", borderBottom: "1px solid var(--color-line)", verticalAlign: "top", fontSize: "0.86rem" };
-const head = { ...cell, fontWeight: 700, background: "var(--color-subtle)", whiteSpace: "nowrap", textAlign: "left" };
-const sub = { fontSize: "0.76rem", color: "var(--color-ink-muted)", fontWeight: 400 };
-const fieldStyle = {
-  padding: "8px 10px",
-  border: "1px solid var(--color-line-strong)",
-  borderRadius: 10,
-  fontSize: "0.9rem",
-  background: "var(--color-surface)",
-  boxSizing: "border-box",
-};
+import { PageHeader } from "./AppShell";
+import { Alert, Badge, Button, EmptyState, Field, Input, Modal, Select, SkeletonList, StatCard, Table, Td, Th, Tr, cx } from "./ui";
 
 const personName = (c) => [c?.first_name, c?.last_name].filter(Boolean).join(" ").trim();
 const sellerDisplay = (t) => personName(t.seller) || t.seller_label || "—";
@@ -68,10 +60,10 @@ const PartiesCell = ({ t }) => {
   return (
     <>
       <div>
-        <span style={sub}>{rental ? "Bailleur" : "Vendeur"} :</span> {sellerDisplay(t)}
+        <span className="text-ink-muted">{rental ? "Bailleur" : "Vendeur"} :</span> {sellerDisplay(t)}
       </div>
       <div>
-        <span style={sub}>{rental ? "Locataire" : "Acquéreur"} :</span> {buyerDisplay(t)}
+        <span className="text-ink-muted">{rental ? "Locataire" : "Acquéreur"} :</span> {buyerDisplay(t)}
       </div>
     </>
   );
@@ -80,25 +72,29 @@ const PartiesCell = ({ t }) => {
 // Une ligne par personne (entrée + sortie regroupées) ; le détail par côté reste dans la fiche.
 const ParticipantsCell = ({ t, viewer, net, profileLabel, formatCurrency }) =>
   groupParticipantsByUser(participantsVisibleTo(t.participants, viewer)).map((g) => (
-    <div key={g.user_id} style={{ whiteSpace: "nowrap" }}>
+    <div key={g.user_id} className="whitespace-nowrap">
       {shortName(profileLabel(g.user_id))} {g.share_pct} % · {formatCurrency(participantAmount(net, g.share_pct))}
     </div>
   ));
 
+// Couleurs de statut : celles des phases de la fiche vendeur (promesse, vendu), annulée en rouge.
+const STATUS_TONES = { promise: "promesse", sold: "vendu", rented: "premandat", cancelled: "danger" };
 const StatusBadge = ({ tx }) => {
   const status = displayStatus(tx);
-  const colors = {
-    promise: ["var(--color-warning-soft)", "var(--color-warning)"],
-    sold: ["var(--color-success-soft)", "var(--color-success)"],
-    rented: ["var(--color-info-soft)", "var(--color-info)"],
-    cancelled: ["var(--color-danger-soft)", "var(--color-danger)"],
-  }[status];
-  return (
-    <span style={{ background: colors[0], color: colors[1], borderRadius: 999, padding: "2px 8px", fontSize: "0.78rem", whiteSpace: "nowrap" }}>
-      {DISPLAY_STATUS_LABELS[status]}
-    </span>
-  );
+  return <Badge tone={STATUS_TONES[status]}>{DISPLAY_STATUS_LABELS[status]}</Badge>;
 };
+
+const ValidationBadge = ({ tx }) => {
+  const label = validationLabel(tx);
+  return label ? <Badge tone={isValidated(tx) ? "success" : "warning"}>{label}</Badge> : null;
+};
+
+const Fact = ({ label, children, className = "" }) => (
+  <div className={cx("min-w-0", className)}>
+    <dt className="text-sm text-ink-muted">{label}</dt>
+    <dd className="tabular font-semibold text-ink">{children}</dd>
+  </div>
+);
 
 function TransactionDetailModal({
   tx,
@@ -123,7 +119,7 @@ function TransactionDetailModal({
 
   const editable = canEditTransaction(tx, userId, isAdmin) && !isCancelled(tx);
   const canDelete = canDeleteTransaction(tx, userId, isAdmin);
-  const actedLocked = !isAdmin && isActedTransaction(tx);
+  const validatedLocked = !isAdmin && isValidated(tx);
   const feesHt = transactionFeesHt(tx);
   const isRental = tx.kind === "rental";
   const status = displayStatus(tx);
@@ -218,155 +214,174 @@ function TransactionDetailModal({
 
 
   return (
-    <div className="admin-modal-backdrop" onClick={onClose}>
-      <div className="admin-modal admin-modal-xl" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 860 }}>
-        <div className="admin-modal-head">
-          <div>
-            <h2>
-              {TRANSACTION_KIND_LABELS[tx.kind]} · {propertyDisplay(tx)}
-            </h2>
-            <p className="admin-modal-sub">
-              <StatusBadge tx={tx} />{" "}
-              {tx.validated_at
-                ? `Validée le ${formatDate(tx.validated_at)}${tx.validated_by ? ` par ${profileLabel(tx.validated_by)}` : ""}`
-                : "Non validée"}
-            </p>
-          </div>
-          <button type="button" className="btn-outline" onClick={onClose}>
-            Fermer
-          </button>
-        </div>
-
-        {actedLocked && (
-          <div className="admin-alert" style={{ background: "var(--color-subtle)", color: "var(--color-ink-soft)", border: "1px solid var(--color-line)" }}>
-            {ACTED_LOCK_MESSAGE}
-          </div>
-        )}
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8, fontSize: "0.9rem" }}>
-          <div><strong>{isRental ? "Bailleur" : "Vendeur"} :</strong> {sellerDisplay(tx)}</div>
-          <div><strong>{isRental ? "Locataire" : "Acquéreur"} :</strong> {buyerDisplay(tx)}</div>
-          <div><strong>{isRental ? "Loyer CC" : "Prix"} :</strong> {tx.price !== null && tx.price !== undefined ? formatCurrency(tx.price) : "—"}</div>
-          <div><strong>{isRental ? "Date du bail" : "Date de vente"} :</strong> {tx.deed_date ? formatDate(tx.deed_date) : "—"}</div>
-          {!isRental && tx.preliminary_date && <div><strong>Promesse :</strong> {formatDate(tx.preliminary_date)}</div>}
-          <div><strong>Honoraires :</strong> {formatCurrency(feesHt)} HT · {formatCurrency(tx.fees_ttc || 0)} TTC ({Number(tx.vat_rate)} %)</div>
-          {tx.property?.property_type && (
-            <div><strong>Bien :</strong> {PROPERTY_TYPE_LABELS[tx.property.property_type]}{tx.property.surface ? ` · ${tx.property.surface} m²` : ""}</div>
+    <Modal
+      open
+      size="lg"
+      busy={busy}
+      title={`${TRANSACTION_KIND_LABELS[tx.kind]} · ${propertyDisplay(tx)}`}
+      description={
+        <span className="flex flex-wrap items-center gap-2">
+          <StatusBadge tx={tx} />
+          {tx.validated_at
+            ? `Validée le ${formatDate(tx.validated_at)}${tx.validated_by ? ` par ${profileLabel(tx.validated_by)}` : ""}`
+            : "Non validée"}
+        </span>
+      }
+      onClose={onClose}
+      footer={
+        <>
+          {canDelete && (
+            <Button variant="danger" disabled={busy} onClick={deleteTx}>
+              Supprimer
+            </Button>
           )}
-          {tx.cancel_reason && <div style={{ color: "var(--color-danger)" }}><strong>Motif d'annulation :</strong> {tx.cancel_reason}</div>}
-          {tx.notes && <div style={{ gridColumn: "1 / -1" }}><strong>Notes :</strong> {tx.notes}</div>}
-        </div>
+          {editable && (
+            <Button variant="secondary" disabled={busy} onClick={() => onCancel(tx)}>
+              {status === "promise" ? "Promesse annulée" : "Annuler la transaction"}
+            </Button>
+          )}
+          {editable && (
+            <Button variant="secondary" disabled={busy} onClick={() => onEdit(tx)}>
+              Modifier
+            </Button>
+          )}
+          {isAdmin && isAwaitingValidation(tx) && (
+            <Button disabled={busy} onClick={validateTx}>
+              Valider
+            </Button>
+          )}
+        </>
+      }
+    >
+      <div className="space-y-6">
+        {validatedLocked && <Alert tone="info">{VALIDATED_LOCK_MESSAGE}</Alert>}
 
-        <h3>Déductions avant commission</h3>
-        {(tx.deductions || []).length === 0 && <p style={{ fontSize: "0.88rem", color: "var(--color-ink-muted)" }}>Aucune déduction.</p>}
-        {(tx.deductions || []).map((d) => (
-          <div key={d.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 6, fontSize: "0.9rem" }}>
-            <span>
-              <strong>{d.label}</strong>
-              {d.beneficiary ? ` · ${d.beneficiary}` : ""} · {formatCurrency(d.amount_ht)} HT
-              <br />
-              <span style={{ color: "var(--color-ink-muted)" }}>{d.reason}</span>
-            </span>
-            {editable && (
-              <button type="button" className="btn-outline-small" disabled={busy} onClick={() => deleteDeduction(d.id)}>
-                Supprimer
-              </button>
-            )}
-          </div>
-        ))}
-        {editable && <DeductionAddForm onAdd={addDeduction} disabled={busy} />}
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+          <Fact label={isRental ? "Bailleur" : "Vendeur"}>{sellerDisplay(tx)}</Fact>
+          <Fact label={isRental ? "Locataire" : "Acquéreur"}>{buyerDisplay(tx)}</Fact>
+          <Fact label={isRental ? "Loyer CC" : "Prix"}>{tx.price !== null && tx.price !== undefined ? formatCurrency(tx.price) : "—"}</Fact>
+          <Fact label={isRental ? "Date du bail" : "Date de vente"}>{tx.deed_date ? formatDate(tx.deed_date) : "—"}</Fact>
+          {!isRental && tx.preliminary_date && <Fact label="Promesse">{formatDate(tx.preliminary_date)}</Fact>}
+          <Fact label="Honoraires">
+            {formatCurrency(feesHt)} HT · {formatCurrency(tx.fees_ttc || 0)} TTC ({Number(tx.vat_rate)} %)
+          </Fact>
+          {tx.property?.property_type && (
+            <Fact label="Bien">
+              {PROPERTY_TYPE_LABELS[tx.property.property_type]}
+              {tx.property.surface ? ` · ${tx.property.surface} m²` : ""}
+            </Fact>
+          )}
+          {tx.cancel_reason && (
+            <Fact label="Motif d'annulation" className="sm:col-span-2">
+              <span className="text-danger">{tx.cancel_reason}</span>
+            </Fact>
+          )}
+          {tx.notes && (
+            <Fact label="Notes" className="sm:col-span-2">
+              <span className="font-normal whitespace-pre-line">{tx.notes}</span>
+            </Fact>
+          )}
+        </dl>
 
-        <h3>Calcul des commissions</h3>
-        <FeesBreakdown
-          feesHt={feesHt}
-          deductions={tx.deductions || []}
-          participants={participantsVisibleTo(tx.participants, viewer)}
-          profileLabel={profileLabel}
-          formatCurrency={formatCurrency}
-        />
+        <section className="space-y-3">
+          <h3 className="text-base font-semibold text-ink">Déductions avant commission</h3>
+          {(tx.deductions || []).length === 0 ? (
+            <p className="text-sm text-ink-muted">Aucune déduction.</p>
+          ) : (
+            <ul className="divide-y divide-line rounded-control border border-line">
+              {(tx.deductions || []).map((d) => (
+                <li key={d.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3 text-sm">
+                  <span className="min-w-0">
+                    <strong className="text-ink">{d.label}</strong>
+                    {d.beneficiary ? ` · ${d.beneficiary}` : ""} · {formatCurrency(d.amount_ht)} HT
+                    <span className="block text-ink-muted">{d.reason}</span>
+                  </span>
+                  {editable && (
+                    <Button variant="quiet" size="xs" disabled={busy} onClick={() => deleteDeduction(d.id)}>
+                      Supprimer
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {editable && <DeductionAddForm onAdd={addDeduction} disabled={busy} />}
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-base font-semibold text-ink">Calcul des commissions</h3>
+          <FeesBreakdown
+            feesHt={feesHt}
+            deductions={tx.deductions || []}
+            participants={participantsVisibleTo(tx.participants, viewer)}
+            profileLabel={profileLabel}
+            formatCurrency={formatCurrency}
+          />
+        </section>
 
         {isAdmin && !isCancelled(tx) && (tx.participants || []).length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <strong style={{ fontSize: "0.9rem" }}>Taux de commission exceptionnels</strong>
-            <p className="admin-modal-sub" style={{ margin: "2px 0 6px" }}>
-              Vide = taux du profil du commercial selon le côté. Un taux exceptionnel recalcule sa commission.
-            </p>
-            {(tx.participants || []).map((p) => (
-              <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 4, fontSize: "0.88rem" }}>
-                <span style={{ minWidth: 180 }}>
-                  {profileLabel(p.user_id) || "—"} · {SIDE_LABELS[p.side]} {Number(p.share_pct)} %
-                </span>
-                <input
-                  style={{ ...fieldStyle, width: 90 }}
-                  inputMode="decimal"
-                  placeholder="profil"
-                  aria-label={`Taux exceptionnel ${profileLabel(p.user_id) || ""} ${SIDE_LABELS[p.side]}`}
-                  value={rates[p.id] ?? ""}
-                  onChange={(e) => setRates((r) => ({ ...r, [p.id]: e.target.value }))}
-                />
-                <span>%</span>
-                <button type="button" className="btn-outline-small" disabled={busy} onClick={() => saveRate(p.id)}>
-                  Appliquer
-                </button>
-              </div>
-            ))}
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-base font-semibold text-ink">Taux de commission exceptionnels</h3>
+              <p className="mt-1 text-sm text-ink-muted">
+                Vide = taux du profil du commercial selon le côté. Un taux exceptionnel recalcule sa commission.
+              </p>
+            </div>
+            <ul className="space-y-2">
+              {(tx.participants || []).map((p) => (
+                <li key={p.id} className="flex flex-wrap items-center gap-3 text-sm">
+                  <span className="min-w-48 flex-1 text-ink">
+                    {profileLabel(p.user_id) || "—"} · {SIDE_LABELS[p.side]} {Number(p.share_pct)} %
+                  </span>
+                  <div className="relative w-32">
+                    <Input
+                      inputMode="decimal"
+                      placeholder="profil"
+                      className="pr-9"
+                      aria-label={`Taux exceptionnel ${profileLabel(p.user_id) || ""} ${SIDE_LABELS[p.side]}`}
+                      value={rates[p.id] ?? ""}
+                      onChange={(e) => setRates((r) => ({ ...r, [p.id]: e.target.value }))}
+                    />
+                    <span className="pointer-events-none absolute top-1/2 right-4 -translate-y-1/2 text-ink-muted">%</span>
+                  </div>
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => saveRate(p.id)}>
+                    Appliquer
+                  </Button>
+                </li>
+              ))}
+            </ul>
             {tx.status === "cashed" && (
-              <button type="button" className="btn-outline-small" style={{ marginTop: 8 }} disabled={busy} onClick={recalculateCommissions}>
+              <Button variant="secondary" size="sm" disabled={busy} onClick={recalculateCommissions}>
                 Recalculer les commissions aux taux actuels
-              </button>
+              </Button>
             )}
-          </div>
+          </section>
         )}
 
         {editable && status === "promise" && (
-          <div style={{ marginTop: 14 }}>
-            <button type="button" className="btn-primary" onClick={() => onSignSale(tx)}>
-              Marquer comme vendue
-            </button>
-            <span className="admin-modal-sub" style={{ marginLeft: 8 }}>
-              Seule la date de vente est demandée.
-            </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={() => onSignSale(tx)}>Marquer comme vendue</Button>
+            <span className="text-sm text-ink-muted">Seule la date de vente est demandée.</span>
           </div>
         )}
 
         {isAdmin && !isCancelled(tx) && tx.status === "cashed" && (
-          <>
-            <h3>Admin</h3>
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", fontSize: "0.85rem" }}>
-              <label>
-                Encaissement des honoraires
-                <br />
-                <input type="date" style={fieldStyle} value={feesReceivedAt} onChange={(e) => setFeesReceivedAt(e.target.value)} />
-              </label>
-              <button type="button" className="btn-secondary" disabled={busy} onClick={saveFeesReceivedAt}>Enregistrer</button>
+          <section className="space-y-3 border-t border-line pt-5">
+            <h3 className="text-base font-semibold text-ink">Encaissement (admin)</h3>
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Encaissement des honoraires" hint={`Par défaut égale à la date ${isRental ? "du bail" : "de vente"}. Sert au CA annuel.`}>
+                <Input type="date" value={feesReceivedAt} onChange={(e) => setFeesReceivedAt(e.target.value)} />
+              </Field>
+              <Button variant="secondary" disabled={busy} onClick={saveFeesReceivedAt} className="mb-7">
+                Enregistrer
+              </Button>
             </div>
-            <p className="admin-modal-sub">Par défaut égale à la date {isRental ? "du bail" : "de vente"}. Sert au CA annuel.</p>
-          </>
+          </section>
         )}
 
-        {error && <p className="error-text" style={{ marginTop: 12 }}>{error}</p>}
-
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18, flexWrap: "wrap" }}>
-          {canDelete && (
-            <button type="button" className="btn-outline" disabled={busy} onClick={deleteTx}>Supprimer</button>
-          )}
-          {editable && (
-            <button type="button" className="btn-outline" disabled={busy} onClick={() => onCancel(tx)}>
-              {status === "promise" ? "Promesse annulée" : "Annuler la transaction"}
-            </button>
-          )}
-          {editable && (
-            <button type="button" className="btn-secondary" disabled={busy} onClick={() => onEdit(tx)}>Modifier</button>
-          )}
-          {isAdmin && !tx.validated_at && !isCancelled(tx) && (
-            <button type="button" className="btn-primary" disabled={busy} onClick={validateTx}>Valider</button>
-          )}
-        </div>
-        {!editable && !actedLocked && !isCancelled(tx) && tx.validated_at && (
-          <p className="admin-modal-sub" style={{ textAlign: "right" }}>Transaction validée : lecture seule.</p>
-        )}
+        {error && <Alert>{error}</Alert>}
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -397,6 +412,48 @@ export default function TransactionsPage({
   const [dateTo, setDateTo] = useState("");
   const navigate = useNavigate();
   const setDetailId = (id) => navigate(transactionPath(id));
+  const [validatingId, setValidatingId] = useState(null);
+  const [rowError, setRowError] = useState("");
+
+  // Données toujours à jour sans bouton « Actualiser » : à l'arrivée sur la page et au retour sur l'onglet
+  useEffect(() => {
+    onReload?.();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") onReload?.();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Admin : validation directe depuis la ligne (même effet que dans la fiche)
+  const validateRow = async (e, tx) => {
+    e.stopPropagation();
+    setValidatingId(tx.id);
+    setRowError("");
+    const { error: err } = await supabase.rpc("validate_transaction", { p_id: tx.id });
+    setValidatingId(null);
+    if (err) {
+      setRowError(`Validation impossible : ${err.message}`);
+      return;
+    }
+    await onReload?.();
+  };
+
+  const renderValidation = (t) => (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <ValidationBadge tx={t} />
+      {isAdmin && isAwaitingValidation(t) && (
+        <Button size="xs" variant="secondary" loading={validatingId === t.id} disabled={!!validatingId} onClick={(e) => validateRow(e, t)}>
+          Valider
+        </Button>
+      )}
+    </span>
+  );
 
   const viewer = useMemo(
     () => ({ userId, isAdmin, isManager, managedUserIds: managedUserIds || [] }),
@@ -409,7 +466,9 @@ export default function TransactionsPage({
     const to = parseDateStr(dateTo);
     return (transactions || [])
       .filter((t) => kindFilter === "all" || t.kind === kindFilter)
-      .filter((t) => statusFilter === "all" || displayStatus(t) === statusFilter)
+      .filter((t) =>
+        statusFilter === "all" ? true : statusFilter === "to_validate" ? isAwaitingValidation(t) : displayStatus(t) === statusFilter
+      )
       .filter((t) => userFilter === "all" || (t.participants || []).some((p) => p.user_id === userFilter))
       .filter((t) => {
         if (!from && !to) return true;
@@ -450,172 +509,174 @@ export default function TransactionsPage({
 
   const detail = detailId ? (transactions || []).find((t) => t.id === detailId) : null;
 
+  const filterLabel = "text-sm font-semibold whitespace-nowrap text-ink-muted";
+
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-        <h2 className="dash-page-title" style={{ margin: 0 }}>Transactions</h2>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button type="button" className="btn-outline" onClick={onReload} disabled={loading}>Actualiser</button>
-          <button type="button" className="btn-primary" onClick={() => onNew("sale")}>Nouvelle vente</button>
-          <button type="button" className="btn-primary" onClick={() => onNew("rental")}>Nouvelle location</button>
-        </div>
-      </div>
+      <PageHeader
+        title="Transactions"
+        subtitle="Ventes et locations, honoraires et répartition."
+        actions={
+          <>
+            <Button onClick={() => onNew("sale")}>Nouvelle vente</Button>
+            <Button onClick={() => onNew("rental")}>Nouvelle location</Button>
+          </>
+        }
+      />
 
-      <div className="filters-row" style={{ justifyContent: "flex-start" }}>
-        <div className="filter-group">
-          <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}>
+      <div className="mb-6 flex flex-wrap items-center gap-x-5 gap-y-3">
+        <div className="w-44">
+          <Select aria-label="Type" value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}>
             <option value="all">Tous types</option>
             <option value="sale">Ventes</option>
             <option value="rental">Locations</option>
-          </select>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          </Select>
+        </div>
+        <div className="w-48">
+          <Select aria-label="Statut" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="all">Tous statuts</option>
             {Object.entries(DISPLAY_STATUS_LABELS).map(([v, l]) => (
-              <option key={v} value={v}>{l}</option>
+              <option key={v} value={v}>
+                {l}
+              </option>
             ))}
-          </select>
-          {(isAdmin || isManager) && (
-            <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)}>
+            {isAdmin && <option value="to_validate">À valider</option>}
+          </Select>
+        </div>
+        {(isAdmin || isManager) && (
+          <div className="w-56">
+            <Select aria-label="Commercial" value={userFilter} onChange={(e) => setUserFilter(e.target.value)}>
               <option value="all">Tous commerciaux</option>
               {(filterProfiles || []).map((p) => (
-                <option key={p.id} value={p.id}>{profileLabel(p.id)}</option>
+                <option key={p.id} value={p.id}>
+                  {profileLabel(p.id)}
+                </option>
               ))}
-            </select>
-          )}
-        </div>
-        <div className="filter-group">
-          <span>Période sur</span>
-          <select value={dateField} onChange={(e) => setDateField(e.target.value)}>
-            <option value="deed_date">date de vente / bail</option>
-            <option value="fees_received_at">date d'encaissement</option>
-          </select>
-          <input type="date" style={fieldStyle} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          <span>au</span>
-          <input type="date" style={fieldStyle} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </Select>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={filterLabel}>Période sur</span>
+          <div className="w-56">
+            <Select aria-label="Date de référence" value={dateField} onChange={(e) => setDateField(e.target.value)}>
+              <option value="deed_date">date de vente / bail</option>
+              <option value="fees_received_at">date d'encaissement</option>
+            </Select>
+          </div>
+          <Input type="date" aria-label="Du" className="!w-auto" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          <span className={filterLabel}>au</span>
+          <Input type="date" aria-label="Au" className="!w-auto" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </div>
       </div>
 
-      {loadError && <p className="error-text">{loadError}</p>}
+      {loadError && <Alert className="mb-4">{loadError}</Alert>}
+      {rowError && <Alert className="mb-4">{rowError}</Alert>}
 
-      <style>{`
-        .tx-cards { display: none; }
-        @media (max-width: 1279px) {
-          .tx-table-wrap { display: none; }
-          .tx-cards { display: flex; flex-direction: column; gap: 10px; }
-        }
-      `}</style>
-
-      <div className="tx-table-wrap" style={{ background: "var(--color-surface)", border: "1px solid var(--color-line)", borderRadius: 16 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              {["Date", "Type", "Bien", "Parties", "Prix", "Honoraires", "Base nette HT", "Participants", "Statut", "Validée"].map((h) => (
-                <th key={h} style={head}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 && (
+      {loading && filtered.length === 0 ? (
+        <SkeletonList rows={6} label="Chargement des transactions" />
+      ) : filtered.length === 0 ? (
+        <EmptyState title="Aucune transaction" text="Changez les filtres ou enregistrez une nouvelle vente." />
+      ) : (
+        <>
+          {/* Tableau à partir de 1280 px, cartes en dessous */}
+          <Table className="hidden xl:block">
+            <thead>
               <tr>
-                <td style={{ ...cell, color: "var(--color-ink-muted)" }} colSpan={10}>
-                  {loading ? "Chargement…" : "Aucune transaction."}
-                </td>
+                {["Date", "Type", "Bien", "Parties", "Prix", "Honoraires", "Base nette HT", "Participants", "Statut", "Validation"].map((h) => (
+                  <Th key={h}>{h}</Th>
+                ))}
               </tr>
-            )}
+            </thead>
+            <tbody>
+              {filtered.map((t) => {
+                const r = rowData(t);
+                return (
+                  <Tr key={t.id} onClick={() => setDetailId(t.id)} className={isCancelled(t) ? "opacity-55" : ""}>
+                    <Td className="whitespace-nowrap">{formatDate(mainDate(t))}</Td>
+                    <Td>{TRANSACTION_KIND_LABELS[t.kind]}</Td>
+                    <Td className="min-w-40">{propertyDisplay(t)}</Td>
+                    <Td className="min-w-44">
+                      <PartiesCell t={t} />
+                    </Td>
+                    <Td className="whitespace-nowrap">{t.price !== null && t.price !== undefined ? formatCurrency(t.price) : "—"}</Td>
+                    <Td className="whitespace-nowrap">
+                      {formatCurrency(t.fees_ttc || 0)}
+                      <div className="text-ink-muted">{formatCurrency(r.feesHt)} HT</div>
+                    </Td>
+                    <Td className="whitespace-nowrap">
+                      <strong>{formatCurrency(r.net)}</strong>
+                      {r.ded > 0 && <div className="text-ink-muted">− {formatCurrency(r.ded)}</div>}
+                    </Td>
+                    <Td>
+                      <ParticipantsCell t={t} viewer={viewer} net={r.net} profileLabel={profileLabel} formatCurrency={formatCurrency} />
+                    </Td>
+                    <Td className="whitespace-nowrap">
+                      <StatusBadge tx={t} />
+                    </Td>
+                    <Td className="whitespace-nowrap">
+                      {renderValidation(t)}
+                    </Td>
+                  </Tr>
+                );
+              })}
+            </tbody>
+          </Table>
+
+          <ul className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface shadow-card xl:hidden">
             {filtered.map((t) => {
               const r = rowData(t);
               return (
-                <tr key={t.id} onClick={() => setDetailId(t.id)} style={{ cursor: "pointer", opacity: isCancelled(t) ? 0.55 : 1 }}>
-                  <td style={{ ...cell, whiteSpace: "nowrap" }}>{formatDate(mainDate(t))}</td>
-                  <td style={cell}>{TRANSACTION_KIND_LABELS[t.kind]}</td>
-                  <td style={cell}>{propertyDisplay(t)}</td>
-                  <td style={cell}>
-                    <PartiesCell t={t} />
-                  </td>
-                  <td style={{ ...cell, whiteSpace: "nowrap" }}>{t.price !== null && t.price !== undefined ? formatCurrency(t.price) : "—"}</td>
-                  <td style={{ ...cell, whiteSpace: "nowrap" }}>
-                    {formatCurrency(t.fees_ttc || 0)}
-                    <div style={sub}>{formatCurrency(r.feesHt)} HT</div>
-                  </td>
-                  <td style={{ ...cell, whiteSpace: "nowrap" }}>
-                    <strong>{formatCurrency(r.net)}</strong>
-                    {r.ded > 0 && <div style={sub}>− {formatCurrency(r.ded)} de déductions</div>}
-                  </td>
-                  <td style={cell}>
-                    <ParticipantsCell t={t} viewer={viewer} net={r.net} profileLabel={profileLabel} formatCurrency={formatCurrency} />
-                  </td>
-                  <td style={cell}><StatusBadge tx={t} /></td>
-                  <td style={cell}>{t.validated_at ? "Oui" : "Non"}</td>
-                </tr>
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    onClick={() => setDetailId(t.id)}
+                    className={cx(
+                      "block w-full space-y-2 px-4 py-4 text-left text-sm transition hover:bg-canvas/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary sm:px-6",
+                      isCancelled(t) && "opacity-55"
+                    )}
+                  >
+                    <span className="flex items-start justify-between gap-3">
+                      <strong className="text-base text-ink">
+                        {TRANSACTION_KIND_LABELS[t.kind]} · {formatDate(mainDate(t))}
+                      </strong>
+                      <StatusBadge tx={t} />
+                    </span>
+                    <span className="block text-ink-soft">{propertyDisplay(t)}</span>
+                    <span className="block">
+                      <PartiesCell t={t} />
+                    </span>
+                    <span className="tabular flex flex-wrap justify-between gap-3">
+                      <span>
+                        {formatCurrency(t.fees_ttc || 0)} TTC <span className="text-ink-muted">· {formatCurrency(r.feesHt)} HT</span>
+                      </span>
+                      <span>
+                        Base <strong>{formatCurrency(r.net)}</strong>
+                        {r.ded > 0 && <span className="text-ink-muted"> (− {formatCurrency(r.ded)})</span>}
+                      </span>
+                    </span>
+                    <span className="block">
+                      <ParticipantsCell t={t} viewer={viewer} net={r.net} profileLabel={profileLabel} formatCurrency={formatCurrency} />
+                    </span>
+                    {t.price !== null && t.price !== undefined && (
+                      <span className="block text-ink-muted">Prix {formatCurrency(t.price)}</span>
+                    )}
+                  </button>
+                  <div className="px-4 pb-4 sm:px-6">
+                    {renderValidation(t)}
+                  </div>
+                </li>
               );
             })}
-          </tbody>
-        </table>
-      </div>
+          </ul>
+        </>
+      )}
 
-      <div className="tx-cards">
-        {filtered.length === 0 && (
-          <p style={{ color: "var(--color-ink-muted)" }}>{loading ? "Chargement…" : "Aucune transaction."}</p>
-        )}
-        {filtered.map((t) => {
-          const r = rowData(t);
-          return (
-            <div
-              key={t.id}
-              onClick={() => setDetailId(t.id)}
-              style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-line)",
-                borderRadius: 14,
-                padding: 12,
-                fontSize: "0.88rem",
-                cursor: "pointer",
-                opacity: isCancelled(t) ? 0.55 : 1,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <strong>
-                  {TRANSACTION_KIND_LABELS[t.kind]} · {formatDate(mainDate(t))}
-                </strong>
-                <StatusBadge tx={t} />
-              </div>
-              <div style={{ marginTop: 4 }}>{propertyDisplay(t)}</div>
-              <div style={{ marginTop: 6 }}>
-                <PartiesCell t={t} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
-                <span>
-                  {formatCurrency(t.fees_ttc || 0)} TTC
-                  <div style={sub}>{formatCurrency(r.feesHt)} HT</div>
-                </span>
-                <span style={{ textAlign: "right" }}>
-                  Base <strong>{formatCurrency(r.net)}</strong>
-                  {r.ded > 0 && <div style={sub}>− {formatCurrency(r.ded)} de déductions</div>}
-                </span>
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <ParticipantsCell t={t} viewer={viewer} net={r.net} profileLabel={profileLabel} formatCurrency={formatCurrency} />
-              </div>
-              <div style={{ ...sub, marginTop: 6 }}>
-                {t.price !== null && t.price !== undefined ? `Prix ${formatCurrency(t.price)} · ` : ""}
-                {t.validated_at ? "Validée" : "Non validée"}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginTop: 14 }}>
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {totals.map(([label, value]) => (
-          <div key={label} className="conversion-card">
-            <div className="conversion-card-title">{label}</div>
-            <div className="conversion-card-value">{formatCurrency(value)}</div>
-          </div>
+          <StatCard key={label} label={label} value={formatCurrency(value)} />
         ))}
       </div>
-      <p style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}>
-        Totaux calculés sur les transactions filtrées, annulées exclues.
-      </p>
+      <p className="mt-2 text-sm text-ink-muted">Totaux calculés sur les transactions filtrées, annulées exclues.</p>
 
       {detail && (
         <TransactionDetailModal

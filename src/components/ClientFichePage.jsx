@@ -47,16 +47,16 @@ export default function ClientFichePage({ client, loading, humanCategory, ownerL
         title={name}
         subtitle={
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <Badge tone="primary">{humanCategory(client.category)}</Badge>
+            <Badge tone="accent">{humanCategory(client.category)}</Badge>
             {closed && <Badge tone={closed === "Vendu" ? "success" : "muted"}>{closed}</Badge>}
             {client.phone && (
-              <a href={`tel:${client.phone}`} className={cx("inline-flex items-center gap-1.5 rounded hover:text-primary", focusRing)}>
+              <a href={`tel:${client.phone}`} className={cx("inline-flex items-center gap-1.5 rounded hover:text-accent", focusRing)}>
                 <Icon name="phone" size={15} />
                 {formatPhone(client.phone)}
               </a>
             )}
             {client.email && (
-              <a href={`mailto:${client.email}`} className={cx("inline-flex items-center gap-1.5 rounded hover:text-primary", focusRing)}>
+              <a href={`mailto:${client.email}`} className={cx("inline-flex items-center gap-1.5 rounded hover:text-accent", focusRing)}>
                 <Icon name="mail" size={15} />
                 {client.email}
               </a>

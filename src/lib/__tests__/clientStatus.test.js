@@ -40,6 +40,7 @@ describe("filtres de statut", () => {
 describe("dossiers clos", () => {
   it("libellé du motif, motif inconnu affiché tel quel", () => {
     expect(closureReasonLabel("vendu_autre_agence")).toBe("Vendu par une autre agence");
+    expect(closureReasonLabel("vente_annulee")).toBe("Vente annulée");
     expect(closureReasonLabel("ancien_motif")).toBe("ancien_motif");
     expect(closureReasonLabel(null)).toBe("Motif non renseigné");
   });

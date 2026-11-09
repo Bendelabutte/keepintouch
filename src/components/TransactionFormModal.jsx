@@ -22,31 +22,48 @@ import {
 import AddressAutocomplete from "./AddressAutocomplete";
 import BuyerFields from "./BuyerFields";
 import { emailError } from "../lib/contact";
+import { Alert, Button, Checkbox, Field, Icon, Input, Modal, Select, Textarea, cx, focusRing } from "./ui";
 
 const str = (v) => (v === null || v === undefined ? "" : String(v));
 
-const fieldStyle = {
-  width: "100%",
-  padding: "9px 11px",
-  border: "1px solid var(--color-line-strong)",
-  borderRadius: 10,
-  fontSize: "0.92rem",
-  background: "var(--color-surface)",
-  boxSizing: "border-box",
-  marginTop: 4,
-};
-const labelStyle = { display: "block", fontSize: "0.85rem", fontWeight: 600, color: "var(--color-ink)" };
-const sectionStyle = {
-  marginTop: 16,
-  border: "1px solid var(--color-line)",
-  borderRadius: 14,
-  padding: 14,
-  background: "var(--color-subtle)",
-};
-const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 };
-
 const clientName = (c) =>
   [c?.first_name, c?.last_name].filter(Boolean).join(" ").trim() || c?.email || "(sans nom)";
+
+// Section du formulaire : titre, puis contenu.
+function FormSection({ title, description, actions, children }) {
+  return (
+    <section className="space-y-4 rounded-card border border-line p-5">
+      {(title || actions) && (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            {title && <h3 className="text-base font-semibold text-ink">{title}</h3>}
+            {description && <p className="mt-1 text-sm text-ink-muted">{description}</p>}
+          </div>
+          {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+// Choix en boutons radio sur une ligne.
+function RadioRow({ name, options, value, onChange }) {
+  return (
+    <div role="radiogroup" className="flex flex-wrap gap-x-5">
+      {options.map(([v, label]) => (
+        <label key={v} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium text-ink">
+          <input type="radio" name={name} className="size-4 accent-primary" checked={value === v} onChange={() => onChange(v)} />
+          {label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+const Hint = ({ children, tone = "muted" }) => (
+  <p className={cx("text-sm", tone === "info" ? "text-info" : "text-ink-muted")}>{children}</p>
+);
 
 function ClientPicker({ clients, value, onChange, categories }) {
   const [search, setSearch] = useState("");
@@ -59,15 +76,9 @@ function ClientPicker({ clients, value, onChange, categories }) {
   }, [clients, search, categories, value]);
 
   return (
-    <div>
-      <input
-        type="text"
-        placeholder="Rechercher une fiche…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={fieldStyle}
-      />
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...fieldStyle, borderRadius: 10 }}>
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <Input aria-label="Rechercher une fiche" placeholder="Rechercher une fiche…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <Select aria-label="Fiche" value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">— Choisir une fiche —</option>
         {options.map((c) => (
           <option key={c.id} value={c.id}>
@@ -75,7 +86,7 @@ function ClientPicker({ clients, value, onChange, categories }) {
             {c.status === "closed" ? " (clôturée)" : ""}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }
@@ -87,24 +98,24 @@ function PartyField({ title, prefix, draft, set, clients, categories, locked, lo
   const mode = freeOnly ? "free" : draft[`${prefix}_mode`];
   if (locked) {
     return (
-      <div style={labelStyle}>
-        {title}
-        <div style={{ ...fieldStyle, background: "var(--color-subtle)", fontWeight: 400 }}>{lockedLabel}</div>
-      </div>
+      <Field label={title}>
+        <Input value={lockedLabel || ""} disabled readOnly />
+      </Field>
     );
   }
   return (
-    <div style={labelStyle}>
-      {title}
+    <div className="space-y-2">
+      <p className="text-sm font-semibold text-ink">{title}</p>
       {!freeOnly && (
-        <div style={{ display: "flex", gap: 12, fontWeight: 400, marginTop: 4 }}>
-          <label>
-            <input type="radio" checked={mode === "client"} onChange={() => set(`${prefix}_mode`, "client")} /> Fiche existante
-          </label>
-          <label>
-            <input type="radio" checked={mode === "free"} onChange={() => set(`${prefix}_mode`, "free")} /> Saisie libre
-          </label>
-        </div>
+        <RadioRow
+          name={`${prefix}-mode`}
+          options={[
+            ["client", "Fiche existante"],
+            ["free", "Saisie libre"],
+          ]}
+          value={mode}
+          onChange={(v) => set(`${prefix}_mode`, v)}
+        />
       )}
       {mode === "client" ? (
         <ClientPicker
@@ -114,20 +125,18 @@ function PartyField({ title, prefix, draft, set, clients, categories, locked, lo
           categories={categories}
         />
       ) : (
-        <div style={{ fontWeight: 400 }}>
+        <div className="space-y-3">
           {freeContent || (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <input
-                type="text"
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Input
+                aria-label={`Prénom (${title.toLowerCase()})`}
                 placeholder="Prénom"
-                style={fieldStyle}
                 value={draft[`${prefix}_first_name`]}
                 onChange={(e) => set(`${prefix}_first_name`, e.target.value)}
               />
-              <input
-                type="text"
+              <Input
+                aria-label={`Nom (${title.toLowerCase()})`}
                 placeholder="Nom"
-                style={fieldStyle}
                 value={draft[`${prefix}_last_name`]}
                 onChange={(e) => set(`${prefix}_last_name`, e.target.value)}
               />
@@ -156,29 +165,24 @@ export function DeductionAddForm({ onAdd, disabled }) {
   };
 
   return (
-    <div style={{ marginTop: 10, borderTop: "1px dashed var(--color-line-strong)", paddingTop: 10 }}>
-      <div style={gridStyle}>
-        <label style={labelStyle}>
-          Libellé *
-          <input style={fieldStyle} value={form.label} placeholder="Commission apporteur d'affaires" onChange={(e) => set("label", e.target.value)} />
-        </label>
-        <label style={labelStyle}>
-          Bénéficiaire
-          <input style={fieldStyle} value={form.beneficiary} placeholder="M. X, gardien du 12 rue …" onChange={(e) => set("beneficiary", e.target.value)} />
-        </label>
-        <label style={labelStyle}>
-          Montant HT (€) *
-          <input style={fieldStyle} inputMode="decimal" value={form.amount_ht} onChange={(e) => set("amount_ht", e.target.value)} />
-        </label>
+    <div className="space-y-4 border-t border-dashed border-line-strong pt-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Field label="Libellé" required>
+          <Input value={form.label} placeholder="Commission apporteur d'affaires" onChange={(e) => set("label", e.target.value)} />
+        </Field>
+        <Field label="Bénéficiaire">
+          <Input value={form.beneficiary} placeholder="M. X, gardien du 12 rue …" onChange={(e) => set("beneficiary", e.target.value)} />
+        </Field>
+        <Field label="Montant HT (€)" required>
+          <Input inputMode="decimal" value={form.amount_ht} onChange={(e) => set("amount_ht", e.target.value)} />
+        </Field>
       </div>
-      <label style={{ ...labelStyle, marginTop: 10 }}>
-        Justification *
-        <textarea rows={2} style={{ ...fieldStyle, resize: "vertical" }} value={form.reason} onChange={(e) => set("reason", e.target.value)} />
-      </label>
-      {error && <p className="error-text" style={{ margin: "6px 0 0" }}>{error}</p>}
-      <button type="button" className="btn-outline-small" style={{ marginTop: 8 }} onClick={submit} disabled={disabled}>
-        Ajouter une déduction
-      </button>
+      <Field label="Justification" required error={error}>
+        <Textarea rows={2} value={form.reason} onChange={(e) => set("reason", e.target.value)} />
+      </Field>
+      <Button variant="secondary" size="sm" onClick={submit} disabled={disabled}>
+        Ajouter la déduction
+      </Button>
     </div>
   );
 }
@@ -188,22 +192,28 @@ export function FeesBreakdown({ feesHt, deductions, participants, profileLabel, 
   const ded = deductionsTotal(deductions);
   const base = netFeesHt(feesHt, deductions);
   return (
-    <div style={{ fontSize: "0.9rem", lineHeight: 1.6 }}>
-      <div>
-        Honoraires HT <strong>{formatCurrency(feesHt || 0)}</strong> − déductions HT <strong>{formatCurrency(ded)}</strong> ={" "}
-        base de calcul <strong>{formatCurrency(base)}</strong>
-      </div>
+    <div className="tabular space-y-2 text-sm leading-relaxed text-ink-soft">
+      <p>
+        Honoraires HT <strong className="text-ink">{formatCurrency(feesHt || 0)}</strong> − déductions HT{" "}
+        <strong className="text-ink">{formatCurrency(ded)}</strong> = base de calcul{" "}
+        <strong className="text-ink">{formatCurrency(base)}</strong>
+      </p>
       {participants.length > 0 && (
-        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+        <ul className="divide-y divide-line rounded-control border border-line bg-surface">
           {participants.map((p, i) => (
-            <li key={p.key || p.id || i}>
-              {profileLabel(p.user_id) || "—"} ({SIDE_LABELS[p.side] || p.side}, {Number(p.share_pct || 0)} %) :{" "}
-              <strong>{formatCurrency(participantAmount(base, p.share_pct))}</strong>
+            <li key={p.key || p.id || i} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+              <span>
+                {profileLabel(p.user_id) || "—"}{" "}
+                <span className="text-ink-muted">
+                  ({SIDE_LABELS[p.side] || p.side}, {Number(p.share_pct || 0)} %)
+                </span>
+              </span>
+              <strong className="text-ink">{formatCurrency(participantAmount(base, p.share_pct))}</strong>
             </li>
           ))}
         </ul>
       )}
-      {base < 0 && <p className="error-text" style={{ margin: "4px 0 0" }}>Les déductions dépassent les honoraires HT.</p>}
+      {base < 0 && <p className="font-medium text-danger">Les déductions dépassent les honoraires HT.</p>}
     </div>
   );
 }
@@ -367,334 +377,303 @@ export default function TransactionFormModal({
         : "La fiche vendeur sera clôturée en « Vendu » (promesse en cours annulée)."
       : null;
 
+
   return (
-    <div className="admin-modal-backdrop" onClick={onCancel}>
-      <div className="admin-modal admin-modal-xl" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
-        <h2>{title}</h2>
-        {fromSellerFiche && (
-          <p className="admin-modal-sub">
-            {closureInfo?.sellerLabel ? `Vendeur : ${closureInfo.sellerLabel}. ` : ""}
-            La fiche vendeur passe « Sous promesse » et reste active ; prochaine relance à la date de
-            promesse + le délai « relance sous promesse ». Rien n'est enregistré avant validation de ce formulaire.
-          </p>
-        )}
+    <Modal
+      open
+      size="lg"
+      busy={busy}
+      title={title}
+      description={
+        fromSellerFiche
+          ? `${closureInfo?.sellerLabel ? `Vendeur : ${closureInfo.sellerLabel}. ` : ""}La fiche vendeur passe « Sous promesse » et reste active ; prochaine relance à la date de promesse + le délai « relance sous promesse ». Rien n'est enregistré avant validation de ce formulaire.`
+          : null
+      }
+      onClose={onCancel}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>
+            Annuler
+          </Button>
+          <Button type="submit" form="transaction-form" loading={busy}>
+            {isPromise ? "Enregistrer la promesse" : "Enregistrer"}
+          </Button>
+        </>
+      }
+    >
+      <form id="transaction-form" onSubmit={handleSubmit} className="space-y-5" noValidate>
+        <FormSection>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {!fromSellerFiche && (
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-ink">Type</p>
+                <RadioRow
+                  name="transaction-kind"
+                  options={[
+                    ["sale", "Vente"],
+                    ["rental", "Location"],
+                  ]}
+                  value={draft.kind}
+                  onChange={(v) => set("kind", v)}
+                />
+              </div>
+            )}
 
-        <form onSubmit={handleSubmit}>
-          <div style={sectionStyle}>
-            <div style={gridStyle}>
-              {!fromSellerFiche && (
-                <div style={labelStyle}>
-                  Type
-                  <div style={{ display: "flex", gap: 14, fontWeight: 400, marginTop: 8 }}>
-                    {[
-                      ["sale", "Vente"],
-                      ["rental", "Location"],
-                    ].map(([v, l]) => (
-                      <label key={v}>
-                        <input type="radio" checked={draft.kind === v} onChange={() => set("kind", v)} /> {l}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+            <div className="space-y-1.5">
+              <p className="text-sm font-semibold text-ink">{fromSellerFiche || isRental || promiseLocked ? dateLabel : "Date"}</p>
+              {!isRental && !fromSellerFiche && !promiseLocked && (
+                <RadioRow
+                  name="transaction-date-kind"
+                  options={[
+                    ["promise", "Promesse"],
+                    ["sale", "Vente"],
+                  ]}
+                  value={draft.date_kind}
+                  onChange={(v) => set("date_kind", v)}
+                />
               )}
-
-              <div style={labelStyle}>
-                {fromSellerFiche || isRental || promiseLocked ? dateLabel : "Date"}
-                {!isRental && !fromSellerFiche && !promiseLocked && (
-                  <div style={{ display: "flex", gap: 14, fontWeight: 400, marginTop: 4 }}>
-                    <label>
-                      <input type="radio" checked={draft.date_kind === "promise"} onChange={() => set("date_kind", "promise")} />{" "}
-                      Promesse
-                    </label>
-                    <label>
-                      <input type="radio" checked={draft.date_kind === "sale"} onChange={() => set("date_kind", "sale")} /> Vente
-                    </label>
-                  </div>
-                )}
-                <input
-                  type="date"
-                  aria-label={dateLabel}
-                  style={fieldStyle}
-                  value={draft.date}
-                  onChange={(e) => set("date", e.target.value)}
-                />
-              </div>
+              <Input type="date" aria-label={dateLabel} value={draft.date} onChange={(e) => set("date", e.target.value)} />
             </div>
+          </div>
 
-            <div style={{ ...labelStyle, marginTop: 12 }}>
-              Adresse du bien
-              <AddressAutocomplete
-                value={draft.property.address}
-                placeholder="Commencer à taper l'adresse…"
-                style={fieldStyle}
-                onChange={(text) => setProp("address", text)}
-                onSelect={(a) =>
-                  setDraft((d) => ({
-                    ...d,
-                    property: { ...d.property, address: a.address, postal_code: a.postal_code, city: a.city },
-                  }))
-                }
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-ink">Adresse du bien</p>
+            <AddressAutocomplete
+              value={draft.property.address}
+              placeholder="Commencer à taper l'adresse…"
+              onChange={(text) => setProp("address", text)}
+              onSelect={(a) =>
+                setDraft((d) => ({
+                  ...d,
+                  property: { ...d.property, address: a.address, postal_code: a.postal_code, city: a.city },
+                }))
+              }
+            />
+            <div className="grid grid-cols-[8rem_1fr] gap-3">
+              <Input aria-label="Code postal" placeholder="Code postal" value={draft.property.postal_code} onChange={(e) => setProp("postal_code", e.target.value)} />
+              <Input aria-label="Ville" placeholder="Ville" value={draft.property.city} onChange={(e) => setProp("city", e.target.value)} />
+            </div>
+          </div>
+
+          {!isRental && !isPromise && (
+            <div className="space-y-1.5">
+              <PartyField title="Vendeur" prefix="seller" draft={draft} set={set} clients={clients} categories={["seller"]} />
+              {sellerHint && <Hint>{sellerHint}</Hint>}
+            </div>
+          )}
+
+          <PartyField
+            title={isRental ? "Locataire" : "Acquéreur"}
+            prefix="buyer"
+            draft={draft}
+            set={set}
+            clients={clients}
+            categories={["buyer", "after"]}
+            freeOnly
+            freeContent={
+              <BuyerFields
+                value={draft.buyer}
+                onChange={(b) => set("buyer", b)}
+                required={buyerRequired}
+                clients={canPickBuyer ? clients : null}
+                selectedClient={buyerClient}
+                onSelectClient={canPickBuyer ? selectBuyerClient : null}
+                profileLabel={profileLabel}
+                excludeIds={[draft.seller_client_id]}
               />
-              <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8, fontWeight: 400 }}>
-                <input
-                  style={fieldStyle}
-                  placeholder="Code postal"
-                  value={draft.property.postal_code}
-                  onChange={(e) => setProp("postal_code", e.target.value)}
-                />
-                <input style={fieldStyle} placeholder="Ville" value={draft.property.city} onChange={(e) => setProp("city", e.target.value)} />
-              </div>
-            </div>
+            }
+          >
+            {buyerHint && <Hint>{buyerHint}</Hint>}
+            {splitHint && <Hint tone="info">{splitHint}</Hint>}
+            {!fromSellerFiche && !isRental && !buyerIsClient && (
+              <Checkbox
+                label={`Créer une fiche après-vente pour l'acquéreur${draft.date_kind === "promise" ? " (à l'acte signé)" : ""}`}
+                checked={Boolean(draft.create_after_sale)}
+                onChange={(e) => set("create_after_sale", e.target.checked)}
+              />
+            )}
+          </PartyField>
 
-            {!isRental && !isPromise && (
-              <div style={{ marginTop: 12 }}>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field
+              label="Honoraires TTC de notre agence (€)"
+              required
+              hint={`${feesHt === null ? "" : `soit ${formatCurrency(feesHt)} HT (TVA ${vatRate} %) · `}partage inter-agences : notre part uniquement`}
+            >
+              <Input inputMode="decimal" value={draft.fees_ttc} onChange={(e) => set("fees_ttc", e.target.value)} />
+            </Field>
+            {!isRental && (
+              <Field label={`Prix de vente (€${isPromise ? "" : ", facultatif"})`}>
+                <Input inputMode="decimal" value={draft.price} onChange={(e) => set("price", e.target.value)} />
+              </Field>
+            )}
+          </div>
+        </FormSection>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <button
+            type="button"
+            aria-expanded={showAdvanced}
+            onClick={() => setShowAdvanced((v) => !v)}
+            className={cx("inline-flex min-h-11 items-center gap-1.5 rounded-control text-sm font-semibold text-ink-muted hover:text-ink", focusRing)}
+          >
+            <Icon name="chevronDown" size={16} className={cx("transition-transform", showAdvanced && "rotate-180")} />
+            Options avancées
+          </button>
+          {!showAdvanced && (
+            <span className={cx("text-sm", participantErrors.length ? "text-danger" : "text-ink-muted")}>
+              {participantsSummary || "Aucun participant"}
+              {draft.deductions.length > 0 && ` · ${draft.deductions.length} déduction(s)`}
+            </span>
+          )}
+        </div>
+
+        {showAdvanced && (
+          <>
+            <FormSection>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <Field label="TVA (%)">
+                  <Input inputMode="decimal" value={draft.vat_rate} onChange={(e) => set("vat_rate", e.target.value)} />
+                </Field>
+                <Field label="Type de bien">
+                  <Select value={draft.property.property_type} onChange={(e) => setProp("property_type", e.target.value)}>
+                    <option value="">—</option>
+                    {Object.entries(PROPERTY_TYPE_LABELS).map(([v, l]) => (
+                      <option key={v} value={v}>
+                        {l}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Surface (m²)">
+                  <Input inputMode="decimal" value={draft.property.surface} onChange={(e) => setProp("surface", e.target.value)} />
+                </Field>
+              </div>
+              {(isRental || isPromise) && (
                 <PartyField
-                  title="Vendeur"
+                  title={isRental ? "Bailleur" : "Vendeur"}
                   prefix="seller"
                   draft={draft}
                   set={set}
                   clients={clients}
                   categories={["seller"]}
+                  locked={fromSellerFiche}
+                  lockedLabel={closureInfo?.sellerLabel}
                 />
-                {sellerHint && <div style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)", marginTop: 4 }}>{sellerHint}</div>}
-              </div>
-            )}
+              )}
+            </FormSection>
 
-            <div style={{ marginTop: 12 }}>
-              <PartyField
-                title={isRental ? "Locataire" : "Acquéreur"}
-                prefix="buyer"
-                draft={draft}
-                set={set}
-                clients={clients}
-                categories={["buyer", "after"]}
-                freeOnly
-                freeContent={
-                  <BuyerFields
-                    value={draft.buyer}
-                    onChange={(b) => set("buyer", b)}
-                    required={buyerRequired}
-                    clients={canPickBuyer ? clients : null}
-                    selectedClient={buyerClient}
-                    onSelectClient={canPickBuyer ? selectBuyerClient : null}
-                    profileLabel={profileLabel}
-                    excludeIds={[draft.seller_client_id]}
-                  />
+            {draft.split_locked ? (
+              <FormSection title="Répartition entre négociateurs" description="La répartition inclut un collègue : seul un administrateur peut la modifier." />
+            ) : (
+              <FormSection
+                title="Répartition entre négociateurs"
+                actions={
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => setParticipants([...draft.participants, { key: newRowKey(), user_id: "", side: "sortie" }], true)}
+                    >
+                      Ajouter un participant
+                    </Button>
+                    <Button variant="secondary" size="xs" onClick={() => setParticipants(draft.participants, true)}>
+                      Répartition par défaut
+                    </Button>
+                  </>
                 }
               >
-                {buyerHint && <div style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)", marginTop: 6 }}>{buyerHint}</div>}
-                {splitHint && <div style={{ fontSize: "0.8rem", color: "var(--color-info)", marginTop: 4 }}>{splitHint}</div>}
-                {!fromSellerFiche && !isRental && !buyerIsClient && (
-                  <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(draft.create_after_sale)}
-                      onChange={(e) => set("create_after_sale", e.target.checked)}
-                    />
-                    Créer une fiche après-vente pour l'acquéreur
-                    {draft.date_kind === "promise" ? " (à l'acte signé)" : ""}
-                  </label>
-                )}
-              </PartyField>
-            </div>
-
-            <div style={{ ...gridStyle, marginTop: 12 }}>
-              <label style={labelStyle}>
-                Honoraires TTC de notre agence (€) *
-                <input style={fieldStyle} inputMode="decimal" value={draft.fees_ttc} onChange={(e) => set("fees_ttc", e.target.value)} />
-                <span style={{ fontWeight: 400, fontSize: "0.78rem", color: "var(--color-ink-muted)" }}>
-                  {feesHt === null ? "" : `soit ${formatCurrency(feesHt)} HT (TVA ${vatRate} %) · `}
-                  partage inter-agences : notre part uniquement
-                </span>
-              </label>
-              {!isRental && (
-                <label style={labelStyle}>
-                  Prix de vente (€{isPromise ? "" : ", optionnel"})
-                  <input style={fieldStyle} inputMode="decimal" value={draft.price} onChange={(e) => set("price", e.target.value)} />
-                </label>
-              )}
-            </div>
-          </div>
-
-          <div style={{ marginTop: 14 }}>
-            <button type="button" className="btn-outline-small" onClick={() => setShowAdvanced((v) => !v)}>
-              {showAdvanced ? "▾" : "▸"} Options avancées
-            </button>
-            {!showAdvanced && (
-              <span style={{ marginLeft: 10, fontSize: "0.82rem", color: participantErrors.length ? "var(--color-danger)" : "var(--color-ink-muted)" }}>
-                {participantsSummary || "Aucun participant"}
-                {draft.deductions.length > 0 && ` · ${draft.deductions.length} déduction(s)`}
-              </span>
-            )}
-          </div>
-
-          {showAdvanced && (
-            <>
-              <div style={sectionStyle}>
-                <div style={gridStyle}>
-                  <label style={labelStyle}>
-                    TVA (%)
-                    <input style={fieldStyle} inputMode="decimal" value={draft.vat_rate} onChange={(e) => set("vat_rate", e.target.value)} />
-                  </label>
-                  <label style={labelStyle}>
-                    Type de bien
-                    <select style={fieldStyle} value={draft.property.property_type} onChange={(e) => setProp("property_type", e.target.value)}>
-                      <option value="">—</option>
-                      {Object.entries(PROPERTY_TYPE_LABELS).map(([v, l]) => (
-                        <option key={v} value={v}>
-                          {l}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={labelStyle}>
-                    Surface (m²)
-                    <input style={fieldStyle} inputMode="decimal" value={draft.property.surface} onChange={(e) => setProp("surface", e.target.value)} />
-                  </label>
-                </div>
-                {(isRental || isPromise) && (
-                  <div style={{ marginTop: 12 }}>
-                    <PartyField
-                      title={isRental ? "Bailleur" : "Vendeur"}
-                      prefix="seller"
-                      draft={draft}
-                      set={set}
-                      clients={clients}
-                      categories={["seller"]}
-                      locked={fromSellerFiche}
-                      lockedLabel={closureInfo?.sellerLabel}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {draft.split_locked ? (
-                <div style={sectionStyle}>
-                  <strong>Répartition entre négociateurs</strong>
-                  <p style={{ fontSize: "0.85rem", color: "var(--color-ink-muted)", margin: "4px 0 0" }}>
-                    La répartition ne peut être modifiée que par un administrateur.
-                  </p>
-                </div>
-              ) : (
-                <div style={sectionStyle}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <strong>Répartition entre négociateurs</strong>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button
-                        type="button"
-                        className="btn-outline-small"
-                        onClick={() => setParticipants([...draft.participants, { key: newRowKey(), user_id: "", side: "sortie" }], true)}
-                      >
-                        Ajouter un participant
-                      </button>
-                      <button type="button" className="btn-outline-small" onClick={() => setParticipants(draft.participants, true)}>
-                        Répartition par défaut
-                      </button>
-                    </div>
-                  </div>
+                <ul className="space-y-3">
                   {draft.participants.map((p) => (
-                    <div key={p.key} style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-                      <select style={{ minWidth: 200 }} value={p.user_id} onChange={(e) => updateParticipant(p.key, "user_id", e.target.value)}>
+                    <li key={p.key} className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[minmax(0,1fr)_9rem_7rem_auto]">
+                      <Select aria-label="Négociateur" value={p.user_id} onChange={(e) => updateParticipant(p.key, "user_id", e.target.value)}>
                         <option value="">— Négociateur —</option>
                         {activeProfiles.map((pr) => (
                           <option key={pr.id} value={pr.id}>
                             {profileLabel(pr.id)}
                           </option>
                         ))}
-                      </select>
-                      <select value={p.side} onChange={(e) => updateParticipant(p.key, "side", e.target.value)}>
+                      </Select>
+                      <Select aria-label="Côté" value={p.side} onChange={(e) => updateParticipant(p.key, "side", e.target.value)}>
                         <option value="entree">Entrée</option>
                         <option value="sortie">Sortie</option>
-                      </select>
-                      <input
-                        style={{ ...fieldStyle, width: 90, marginTop: 0 }}
-                        inputMode="decimal"
-                        value={str(p.share_pct)}
-                        onChange={(e) => updateParticipant(p.key, "share_pct", e.target.value)}
-                      />
-                      <span>%</span>
-                      <button
-                        type="button"
-                        className="btn-outline-small"
+                      </Select>
+                      <div className="relative">
+                        <Input
+                          aria-label="Part (%)"
+                          inputMode="decimal"
+                          className="pr-9"
+                          value={str(p.share_pct)}
+                          onChange={(e) => updateParticipant(p.key, "share_pct", e.target.value)}
+                        />
+                        <span className="pointer-events-none absolute top-1/2 right-4 -translate-y-1/2 text-ink-muted">%</span>
+                      </div>
+                      <Button
+                        variant="quiet"
+                        size="sm"
                         onClick={() => setParticipants(draft.participants.filter((x) => x.key !== p.key), true)}
                       >
                         Supprimer
-                      </button>
-                    </div>
+                      </Button>
+                    </li>
                   ))}
-                  <div style={{ marginTop: 8, fontSize: "0.88rem", fontWeight: 600, color: participantErrors.length ? "var(--color-danger)" : "var(--color-success)" }}>
-                    Total : {sharesTotal(numericParticipants)} %
-                    {participantErrors.length > 0 && <span style={{ fontWeight: 400 }}> · {participantErrors.join(" ")}</span>}
-                  </div>
-                </div>
-  
-              )}
-
-              <div style={sectionStyle}>
-                <strong>Déductions avant commission</strong>
-                <p style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)", margin: "4px 0 0" }}>
-                  Dépenses extérieures à l'activité de l'agence (ex. commission d'apporteur d'affaires), déduites des
-                  honoraires HT avant le calcul des commissions des négociateurs.
+                </ul>
+                <p className={cx("text-sm font-semibold", participantErrors.length ? "text-danger" : "text-success")}>
+                  Total : {sharesTotal(numericParticipants)} %
+                  {participantErrors.length > 0 && <span className="font-normal"> · {participantErrors.join(" ")}</span>}
                 </p>
-                {draft.deductions.map((d) => (
-                  <div key={d.key} style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 8, fontSize: "0.9rem" }}>
-                    <span>
-                      <strong>{d.label}</strong>
-                      {d.beneficiary ? ` · ${d.beneficiary}` : ""} · {formatCurrency(d.amount_ht)} HT
-                      <br />
-                      <span style={{ color: "var(--color-ink-muted)" }}>{d.reason}</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="btn-outline-small"
-                      onClick={() => set("deductions", draft.deductions.filter((x) => x.key !== d.key))}
-                    >
-                      Supprimer
-                    </button>
-                  </div>
-                ))}
-                {showDeductionForm ? (
-                  <DeductionAddForm
-                    onAdd={(d) => {
-                      set("deductions", [...draft.deductions, { ...d, key: newRowKey() }]);
-                      setShowDeductionForm(false);
-                    }}
-                  />
-                ) : (
-                  <button type="button" className="btn-outline-small" style={{ marginTop: 8 }} onClick={() => setShowDeductionForm(true)}>
-                    + Ajouter une déduction
-                  </button>
-                )}
-                <div style={{ marginTop: 12 }}>
-                  <FeesBreakdown
-                    feesHt={feesHt || 0}
-                    deductions={draft.deductions}
-                    participants={numericParticipants}
-                    profileLabel={profileLabel}
-                    formatCurrency={formatCurrency}
-                  />
-                </div>
-              </div>
+              </FormSection>
+            )}
 
-              <label style={{ ...labelStyle, marginTop: 16 }}>
-                Notes
-                <textarea rows={2} style={{ ...fieldStyle, resize: "vertical" }} value={draft.notes} onChange={(e) => set("notes", e.target.value)} />
-              </label>
-            </>
-          )}
+            <FormSection
+              title="Déductions avant commission"
+              description="Dépenses extérieures à l'activité de l'agence (ex. commission d'apporteur d'affaires), déduites des honoraires HT avant le calcul des commissions des négociateurs."
+            >
+              {draft.deductions.length > 0 && (
+                <ul className="divide-y divide-line rounded-control border border-line">
+                  {draft.deductions.map((d) => (
+                    <li key={d.key} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3 text-sm">
+                      <span className="min-w-0">
+                        <strong className="text-ink">{d.label}</strong>
+                        {d.beneficiary ? ` · ${d.beneficiary}` : ""} · {formatCurrency(d.amount_ht)} HT
+                        <span className="block text-ink-muted">{d.reason}</span>
+                      </span>
+                      <Button variant="quiet" size="xs" onClick={() => set("deductions", draft.deductions.filter((x) => x.key !== d.key))}>
+                        Supprimer
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {showDeductionForm ? (
+                <DeductionAddForm
+                  onAdd={(d) => {
+                    set("deductions", [...draft.deductions, { ...d, key: newRowKey() }]);
+                    setShowDeductionForm(false);
+                  }}
+                />
+              ) : (
+                <Button variant="secondary" size="sm" icon="plus" onClick={() => setShowDeductionForm(true)}>
+                  Ajouter une déduction
+                </Button>
+              )}
+              <FeesBreakdown
+                feesHt={feesHt || 0}
+                deductions={draft.deductions}
+                participants={numericParticipants}
+                profileLabel={profileLabel}
+                formatCurrency={formatCurrency}
+              />
+            </FormSection>
 
-          {error && <p className="error-text" style={{ marginTop: 12 }}>{error}</p>}
+            <Field label="Notes">
+              <Textarea rows={2} value={draft.notes} onChange={(e) => set("notes", e.target.value)} />
+            </Field>
+          </>
+        )}
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
-            <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>
-              Annuler
-            </button>
-            <button type="submit" className="btn-primary" disabled={busy}>
-              {busy ? "Enregistrement…" : isPromise ? "Enregistrer la promesse" : "Enregistrer"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        {error && <Alert>{error}</Alert>}
+      </form>
+    </Modal>
   );
 }

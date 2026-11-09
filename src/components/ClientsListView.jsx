@@ -31,7 +31,7 @@ export function AddClientButton({ align = "right" }) {
   return (
     <Dropdown
       align={align}
-      triggerClassName={buttonClasses({ variant: "accent" })}
+      triggerClassName={buttonClasses({ variant: "primary" })}
       trigger={
         <>
           <Icon name="plus" />
@@ -69,10 +69,10 @@ export default function ClientsListView({
     <>
       <PageHeader title="Clients" subtitle="Vos fiches à relancer et leur avancement." actions={<AddClientButton />} />
 
-      <div className="mb-4 space-y-3">
-        <Tabs variant="underline" label="Type de fiche" items={CATEGORY_TABS} value={currentTab} onChange={setCurrentTab} />
+      <div className="mb-6 space-y-3">
+        <Tabs label="Type de fiche" items={CATEGORY_TABS} value={currentTab} onChange={setCurrentTab} />
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <Tabs
             label="Statut"
             items={STATUS_FILTERS.map((s) => ({ ...s, count: statusCounts[s.key] ?? 0 }))}
@@ -86,18 +86,18 @@ export default function ClientsListView({
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative min-w-0 flex-1">
-            <Icon name="search" size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-muted" />
+            <Icon name="search" size={20} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-muted" />
             <Input
               type="search"
               aria-label="Rechercher un client"
               placeholder="Rechercher : nom, adresse, email, téléphone"
-              className="pl-9"
+              className="pl-11"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
           {showCommercialFilter && (
-            <div className="sm:w-64">
+            <div className="sm:w-72">
               <Select aria-label="Filtrer par commercial" value={commercialFilter} onChange={(e) => setCommercialFilter(e.target.value)}>
                 <option value="Tous">Tous les commerciaux</option>
                 {commercialOptions.map((c) => (
@@ -117,23 +117,22 @@ export default function ClientsListView({
         <SkeletonList rows={6} label="Chargement des clients" />
       ) : total === 0 && sections.length === 1 ? (
         <EmptyState
-          icon="clients"
           title={sections[0].emptyText}
           text={searchTerm ? "Aucune fiche ne correspond à la recherche." : "Changez de filtre ou ajoutez une fiche."}
           action={<AddClientButton align="left" />}
         />
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-8">
           {sections.map((s) => (
             <section key={s.key}>
-              <h2 className="mb-2 flex items-baseline gap-2 text-sm font-bold text-ink-soft">
+              <h2 className="mb-3 flex items-baseline gap-2 text-lg font-semibold text-ink">
                 {s.title}
-                <span className="tabular text-xs font-semibold text-ink-muted">{s.list.length}</span>
+                <span className="tabular text-sm font-medium text-ink-muted">{s.list.length}</span>
               </h2>
               {s.list.length === 0 ? (
-                <p className="rounded-card border border-dashed border-line-strong px-4 py-3 text-sm text-ink-muted">{s.emptyText}</p>
+                <p className="rounded-card border border-dashed border-line-strong bg-surface px-6 py-5 text-ink-muted">{s.emptyText}</p>
               ) : (
-                <div className="space-y-2">{s.list.map((c) => renderRow(c))}</div>
+                <ul className="space-y-2">{s.list.map((c) => renderRow(c))}</ul>
               )}
             </section>
           ))}

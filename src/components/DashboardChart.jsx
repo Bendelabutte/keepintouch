@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { CHART_MODES, buildChartData, chartSeriesFor, chartYears } from "../lib/charts";
+import { Card, Select, Tabs } from "./ui";
 
 // Palette catégorielle validée (ordre fixe). Un commercial reçoit la première couleur libre quand il est
 // coché et la garde : décocher un autre commercial ne repeint pas les courbes restantes.
@@ -27,21 +28,12 @@ function ChartTooltip({ active, payload, formatCurrency }) {
   const rows = payload.filter((p) => p.value !== null && p.value !== undefined);
   if (!rows.length) return null;
   return (
-    <div
-      style={{
-        background: "#fff",
-        border: "1px solid #e5e7eb",
-        borderRadius: 10,
-        padding: "8px 10px",
-        fontSize: "0.82rem",
-        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-      }}
-    >
-      <div style={{ fontWeight: 600, marginBottom: 4, color: "#111827" }}>{payload[0].payload.fullLabel}</div>
+    <div className="rounded-control border border-line bg-surface px-3 py-2 text-sm shadow-lg">
+      <div className="mb-1 font-semibold text-ink">{payload[0].payload.fullLabel}</div>
       {rows.map((p) => (
-        <div key={p.dataKey} style={{ display: "flex", alignItems: "center", gap: 6, color: "#374151" }}>
-          <span style={{ width: 10, height: 2, background: p.color, display: "inline-block" }} />
-          {p.name} : <strong style={{ color: "#111827" }}>{formatCurrency(p.value)}</strong>
+        <div key={p.dataKey} className="flex items-center gap-2 text-ink-soft">
+          <span className="inline-block h-0.5 w-3" style={{ background: p.color }} />
+          {p.name} : <strong className="tabular text-ink">{formatCurrency(p.value)}</strong>
         </div>
       ))}
     </div>
@@ -98,54 +90,48 @@ export default function DashboardChart({
   const base = isAdmin ? "Agence : honoraires HT · commerciaux : part de base nette HT" : "Part de base nette HT";
 
   return (
-    <div className="dash-chart-card">
-      <div className="dash-chart-head">
-        <div>
-          <div className="conversion-card-title">Honoraires cumulés {currentYear}</div>
-          <div className="conversion-card-sub">{base}, cumul depuis janvier.</div>
-        </div>
-        <div className="dash-chart-controls">
-          <div className="dash-chart-toggle" role="group" aria-label="Type de courbe">
-            {Object.entries(CHART_MODES).map(([key, m]) => (
-              <button
-                key={key}
-                type="button"
-                className={"tab-button" + (mode === key ? " tab-button-active" : "")}
-                aria-pressed={mode === key}
-                onClick={() => setMode(key)}
-              >
-                {m.label}
-              </button>
-            ))}
+    <Card
+      title={`Honoraires cumulés ${currentYear}`}
+      description={`${base}, cumul depuis janvier.`}
+      actions={
+        <>
+          <Tabs
+            label="Type de courbe"
+            items={Object.entries(CHART_MODES).map(([key, m]) => ({ key, label: m.label }))}
+            value={mode}
+            onChange={setMode}
+          />
+          <div className="w-28">
+            <Select value={currentYear} onChange={(e) => setYear(Number(e.target.value))} aria-label="Année">
+              {years.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </Select>
           </div>
-          <select value={currentYear} onChange={(e) => setYear(Number(e.target.value))} aria-label="Année">
-            {years.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {isAdmin && (
-        <div className="dash-chart-users">
-          <label className="dash-chart-chip">
-            <input type="checkbox" checked={showAgency} onChange={(e) => setShowAgency(e.target.checked)} />
-            <span className="dash-chart-swatch" style={{ background: AGENCY_COLOR }} />
+        <div className="mb-4 flex flex-wrap gap-x-5 gap-y-1">
+          <label className="flex min-h-9 cursor-pointer items-center gap-2 text-sm font-medium text-ink-soft">
+            <input type="checkbox" className="size-4 accent-primary" checked={showAgency} onChange={(e) => setShowAgency(e.target.checked)} />
+            <span className="inline-block h-1 w-4 rounded" style={{ background: AGENCY_COLOR }} />
             Agence
           </label>
           {(commercials || []).map((p) => {
             const checked = selectedIds.includes(p.id);
             return (
-              <label key={p.id} className="dash-chart-chip">
+              <label key={p.id} className="flex min-h-9 cursor-pointer items-center gap-2 text-sm font-medium text-ink-soft">
                 <input
                   type="checkbox"
+                  className="size-4 accent-primary"
                   checked={checked}
                   disabled={!checked && selectedIds.length >= MAX_SELECTED}
                   onChange={() => toggleUser(p.id)}
                 />
-                <span className="dash-chart-swatch" style={{ background: colorOf[`u_${p.id}`] || "transparent" }} />
+                <span className="inline-block h-1 w-4 rounded border border-line" style={{ background: colorOf[`u_${p.id}`] || "transparent" }} />
                 {p.label}
               </label>
             );
@@ -153,11 +139,9 @@ export default function DashboardChart({
         </div>
       )}
 
-      <div style={{ width: "100%", height: 300 }}>
+      <div className="h-[300px] w-full">
         {series.length === 0 ? (
-          <p className="conversion-card-sub" style={{ paddingTop: 40, textAlign: "center" }}>
-            Cochez « Agence » ou au moins un commercial.
-          </p>
+          <p className="pt-10 text-center text-sm text-ink-muted">Cochez « Agence » ou au moins un commercial.</p>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
@@ -184,6 +168,6 @@ export default function DashboardChart({
           </ResponsiveContainer>
         )}
       </div>
-    </div>
+    </Card>
   );
 }

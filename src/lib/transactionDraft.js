@@ -219,3 +219,20 @@ export const buyerSplitParticipants = ({ mandateOwnerId, buyerOwnerId }) => {
     { key: newRowKey(), user_id: buyerOwnerId, side: "sortie" },
   ]);
 };
+
+// « Acte signé » : date de l'acte, prix et honoraires TTC de la promesse confirmés ou corrigés.
+export const signSaleForm = (tx, today) => ({
+  date: today,
+  price: tx?.price != null ? String(tx.price) : "",
+  fees_ttc: tx?.fees_ttc != null ? String(tx.fees_ttc) : "",
+});
+
+// Paramètres de sign_promise_sale (montants envoyés dans le même appel que l'acte), ou { error }.
+export const signSaleParams = (form) => {
+  if (!form?.date) return { error: "La date de l'acte est obligatoire." };
+  const price = parseDecimal(form.price);
+  const fees = parseDecimal(form.fees_ttc);
+  if (str(form.price).trim() !== "" && (price === null || price < 0)) return { error: "Prix de vente invalide." };
+  if (fees === null || fees <= 0) return { error: "Les honoraires TTC sont obligatoires." };
+  return { params: { p_deed_date: form.date, p_price: price, p_fees_ttc: fees } };
+};

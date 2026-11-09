@@ -32,7 +32,7 @@ export default function Button({
       className={buttonClasses({ variant, size, block, className })}
       {...props}
     >
-      {loading ? <Spinner /> : icon ? <Icon name={icon} size={size === "sm" ? 16 : 18} /> : null}
+      {loading ? <Spinner /> : icon ? <Icon name={icon} size={size === "xs" ? 16 : 18} /> : null}
       {children}
     </button>
   );
@@ -41,7 +41,7 @@ export default function Button({
 export function ButtonLink({ variant, size, block, icon, className, children, ...props }) {
   return (
     <Link className={buttonClasses({ variant, size, block, className })} {...props}>
-      {icon && <Icon name={icon} size={size === "sm" ? 16 : 18} />}
+      {icon && <Icon name={icon} size={size === "xs" ? 16 : 18} />}
       {children}
     </Link>
   );

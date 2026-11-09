@@ -25,10 +25,10 @@ import {
   emptyTransactionDraft,
   transactionToDraft,
 } from "./lib/transactionDraft";
-import { isPendingPromise, pendingStats, transactionFeesHt } from "./lib/transactions";
+import { isPendingPromise, isSharesTotalValid, pendingStats, transactionFeesHt } from "./lib/transactions";
 import { resolveAddressText } from "./lib/address";
 
-import AppShell from "./components/AppShell";
+import AppShell, { PageHeader } from "./components/AppShell";
 import DashboardCard from "./components/DashboardCard";
 import CompactRow from "./components/CompactRow";
 import ClientDetailCard from "./components/ClientDetailCard";
@@ -36,7 +36,9 @@ import ClientCreatePage, { ClientEditModal } from "./components/ClientCreatePage
 import ClientFichePage from "./components/ClientFichePage";
 import ClientsListView from "./components/ClientsListView";
 import MandateModal from "./components/MandateModal";
-import { Alert } from "./components/ui";
+import SignSaleModal from "./components/SignSaleModal";
+import { Alert, Button, Card, EmptyState, Field, Input, ListRows, Select, Skeleton, SkeletonList, Spinner, StatCard, Table, Td, Th, Tr, cx } from "./components/ui";
+import AuthCard from "./components/AuthCard";
 import { PAGE_PATHS, clientPath, parseRoute, transactionPath } from "./lib/routes";
 import { mandatePotential, promiseInfoForSeller, promisePrefillFromMandate, reopenConfirmation } from "./lib/stages";
 import ClosureModal from "./components/ClosureModal";
@@ -68,6 +70,7 @@ function App() {
   const setPage = (p) => navigate(PAGE_PATHS[p] || PAGE_PATHS.clients);
   // Transaction à ouvrir en arrivant sur la page Transactions (lien depuis une fiche vendue)
   const [mandateClient, setMandateClient] = useState(null);
+  const [signSaleTx, setSignSaleTx] = useState(null);
   const [clientFormError, setClientFormError] = useState("");
 
   // Flow reset mdp
@@ -1269,7 +1272,9 @@ useEffect(() => {
     setPrompt({
       title: "Rouvrir le dossier",
       text: "Réservé à la correction d’une erreur. La fiche redevient active et la prochaine relance est recalculée selon sa phase.",
-      warning: sale.text,
+      warning: sale.text
+        ? `${sale.text} La fiche de l’acquéreur issue de cette vente sera close (ou redeviendra une fiche acquéreur si elle l’était avant la vente).`
+        : null,
       label: "Motif",
       type: "textarea",
       danger: !!sale.transaction,
@@ -1294,8 +1299,9 @@ useEffect(() => {
   };
 
   const openEditTransaction = (tx) => {
-    // Répartition modifiable par l'admin seulement (un commercial ne voit que sa propre ligne).
-    setTransactionForm({ mode: "edit", draft: transactionToDraft(tx, { canEditSplit: isAdmin }) });
+    // Répartition : l'admin, ou un commercial qui voit toutes les lignes (total 100 %). Un commercial ne
+    // voit pas les lignes de ses collègues : dans ce cas, seul l'admin peut changer la répartition.
+    setTransactionForm({ mode: "edit", draft: transactionToDraft(tx, { canEditSplit: isAdmin || isSharesTotalValid(tx.participants) }) });
   };
 
   const findOpenPromise = (client) =>
@@ -1330,26 +1336,19 @@ useEffect(() => {
       alert("Aucune promesse en cours trouvée pour cette fiche.");
       return;
     }
-    setPrompt({
-      title: "Acte signé",
-      text: tx.buyer_client_id
-        ? "Vente définitive chez le notaire. La fiche vendeur passe « Vendu » et la fiche de l'acquéreur devient sa fiche après-vente."
-        : "Vente définitive chez le notaire. La fiche vendeur passe « Vendu » et la fiche après-vente de l'acquéreur est créée automatiquement.",
-      label: "Date de l'acte",
-      type: "date",
-      initialValue: getTodayStr(),
-      confirmLabel: "Confirmer l'acte",
-      onConfirm: async (date) => {
-        const { error } = await supabase.rpc("sign_promise_sale", {
-          p_id: tx.id,
-          p_deed_date: date,
-          p_next_due_date: nextAfterSaleDue(date),
-        });
-        if (error) throw error;
-        setPrompt(null);
-        await reloadAfterTransaction();
-      },
+    setSignSaleTx(tx);
+  };
+
+  // Acte et montants confirmés (ou corrigés) dans le même appel
+  const confirmSignSale = async (tx, params) => {
+    const { error } = await supabase.rpc("sign_promise_sale", {
+      p_id: tx.id,
+      ...params,
+      p_next_due_date: nextAfterSaleDue(params.p_deed_date),
     });
+    if (error) throw error;
+    setSignSaleTx(null);
+    await reloadAfterTransaction();
   };
 
   // « Promesse annulée » / « Annuler la transaction » : motif obligatoire.
@@ -2383,210 +2382,119 @@ const handleCloseReleaseNotesTemporary = () => {
 
   if (sessionLoading) {
     return (
-      <div className="app">
-        <div className="app-center">Chargement de la session…</div>
-      </div>
+      <AuthCard>
+        <div role="status" className="flex items-center justify-center gap-3 text-ink-muted">
+          <Spinner />
+          Chargement de la session…
+        </div>
+      </AuthCard>
     );
   }
 
   if (isResetFlow && session) {
     return (
-      <div className="app auth-screen">
-        <div className="auth-card">
-          <h1>Keepintouch</h1>
-          <span className="badge">Rester en contact</span>
-
-          <h2>Définir un nouveau mot de passe</h2>
-
-          <form onSubmit={handleNewPasswordSubmit} className="auth-form">
-            <label>
-              Nouveau mot de passe
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-              />
-            </label>
-
-            {resetErrorMsg && <p className="error-text">{resetErrorMsg}</p>}
-            {resetDone && (
-              <p style={{ fontSize: "0.85rem", color: "var(--color-success)" }}>
-                Mot de passe mis à jour avec succès.
-              </p>
-            )}
-
-            <button type="submit" className="btn-primary">
-              Enregistrer le nouveau mot de passe
-            </button>
-          </form>
-        </div>
-      </div>
+      <AuthCard title="Nouveau mot de passe">
+        <form onSubmit={handleNewPasswordSubmit} className="space-y-4">
+          <Field label="Nouveau mot de passe" required>
+            <Input type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+          </Field>
+          {resetErrorMsg && <Alert>{resetErrorMsg}</Alert>}
+          {resetDone && <Alert tone="success">Mot de passe mis à jour avec succès.</Alert>}
+          <Button type="submit" block>
+            Enregistrer le nouveau mot de passe
+          </Button>
+        </form>
+      </AuthCard>
     );
   }
 
   if (isInviteFlow && session) {
     return (
-      <div className="app auth-screen">
-        <div className="auth-card">
-          <h1>Keepintouch</h1>
-          <span className="badge">Rester en contact</span>
-
-          <h2>Finaliser votre compte</h2>
-          <p
-            style={{
-              fontSize: "0.9rem",
-              color: "var(--color-ink-muted)",
-              marginTop: 0,
-              lineHeight: 1.4,
-            }}
-          >
-            Votre invitation a bien été acceptée. Renseignez vos informations et choisissez
-            votre mot de passe.
-          </p>
-
-          <form onSubmit={handleInvitePasswordSubmit} className="auth-form">
-            <label>
-              Prénom
-              <input
-                type="text"
-                value={inviteProfileForm.first_name}
-                onChange={(e) => handleInviteProfileFormChange("first_name", e.target.value)}
-                required
-              />
-            </label>
-
-            <label>
-              Nom
-              <input
-                type="text"
-                value={inviteProfileForm.last_name}
-                onChange={(e) => handleInviteProfileFormChange("last_name", e.target.value)}
-                required
-              />
-            </label>
-
-            <label>
-              Téléphone
-              <input
-                type="tel"
-                inputMode="tel"
-                value={inviteProfileForm.phone}
-                onChange={(e) => handleInviteProfileFormChange("phone", formatPhoneInput(e.target.value))}
-                required
-              />
-            </label>
-
-            <label>
-              Mot de passe
-              <input
-                type="password"
-                value={inviteProfileForm.password}
-                onChange={(e) => handleInviteProfileFormChange("password", e.target.value)}
-                required
-              />
-            </label>
-
-            <label>
-              Confirmer le mot de passe
-              <input
-                type="password"
-                value={inviteProfileForm.confirm_password}
-                onChange={(e) => handleInviteProfileFormChange("confirm_password", e.target.value)}
-                required
-              />
-            </label>
-
-            {resetErrorMsg && <p className="error-text">{resetErrorMsg}</p>}
-            {resetDone && (
-              <p style={{ fontSize: "0.85rem", color: "var(--color-success)" }}>
-                Compte finalisé avec succès.
-              </p>
-            )}
-
-            <button type="submit" className="btn-primary" disabled={isLoading}>
-              {isLoading ? "Enregistrement..." : "Finaliser mon compte"}
-            </button>
-          </form>
-        </div>
-      </div>
+      <AuthCard
+        title="Finaliser votre compte"
+        description="Votre invitation a bien été acceptée. Renseignez vos informations et choisissez votre mot de passe."
+      >
+        <form onSubmit={handleInvitePasswordSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Prénom" required>
+              <Input value={inviteProfileForm.first_name} onChange={(e) => handleInviteProfileFormChange("first_name", e.target.value)} />
+            </Field>
+            <Field label="Nom" required>
+              <Input value={inviteProfileForm.last_name} onChange={(e) => handleInviteProfileFormChange("last_name", e.target.value)} />
+            </Field>
+          </div>
+          <Field label="Téléphone" required>
+            <Input
+              type="tel"
+              inputMode="tel"
+              value={inviteProfileForm.phone}
+              onChange={(e) => handleInviteProfileFormChange("phone", formatPhoneInput(e.target.value))}
+            />
+          </Field>
+          <Field label="Mot de passe" required>
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={inviteProfileForm.password}
+              onChange={(e) => handleInviteProfileFormChange("password", e.target.value)}
+            />
+          </Field>
+          <Field label="Confirmer le mot de passe" required>
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={inviteProfileForm.confirm_password}
+              onChange={(e) => handleInviteProfileFormChange("confirm_password", e.target.value)}
+            />
+          </Field>
+          {resetErrorMsg && <Alert>{resetErrorMsg}</Alert>}
+          {resetDone && <Alert tone="success">Compte finalisé avec succès.</Alert>}
+          <Button type="submit" block loading={isLoading}>
+            Finaliser mon compte
+          </Button>
+        </form>
+      </AuthCard>
     );
   }
 
   if (isInviteFlow && !session) {
     return (
-      <div className="app auth-screen">
-        <div className="auth-card">
-          <h1>Keepintouch</h1>
-          <span className="badge">Rester en contact</span>
-
-          <h2>Activation de votre accès…</h2>
-          <p style={{ fontSize: "0.9rem", color: "var(--color-ink-muted)", marginTop: 0 }}>
-            Merci de patienter quelques secondes pendant la validation de votre invitation.
-          </p>
-        </div>
-      </div>
+      <AuthCard
+        title="Activation de votre accès…"
+        description="Merci de patienter quelques secondes pendant la validation de votre invitation."
+      />
     );
   }
 
   if (!session) {
     return (
-      <div className="app auth-screen">
-        <div className="auth-card">
-          <h1>Keepintouch</h1>
-          <span className="badge">Rester en contact</span>
-
-          <h2>Connexion</h2>
-
-          <form onSubmit={handleAuthSubmit} className="auth-form">
-            <label>
-              Email
-              <input
-                type="email"
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                required
-              />
-            </label>
-            <label>
-              Mot de passe
-              <input
-                type="password"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                required
-              />
-            </label>
-
-            {authError && <p className="error-text">{authError}</p>}
-
-            <button type="submit" className="btn-primary">
-              Se connecter
-            </button>
-          </form>
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              marginTop: 8,
-              fontSize: "0.85rem",
-            }}
-          >
-            <button
-              className="link-button"
-              type="button"
-              onClick={handleResetPasswordRequest}
-              disabled={resetLoading}
-            >
-              {resetLoading ? "Envoi..." : "Mot de passe oublié ?"}
-            </button>
-          </div>
-
-          <p className="footer-text">Accès sur invitation administrateur uniquement.</p>
-          <p className="footer-text">© Benjamin Rondreux — Osmoz Dev.</p>
+      <AuthCard
+        title="Connexion"
+        footer={
+          <>
+            <p>Accès sur invitation administrateur uniquement.</p>
+            <p>© Benjamin Rondreux — Osmoz Dev.</p>
+          </>
+        }
+      >
+        <form onSubmit={handleAuthSubmit} className="space-y-4">
+          <Field label="Email" required>
+            <Input type="email" autoComplete="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} />
+          </Field>
+          <Field label="Mot de passe" required>
+            <Input type="password" autoComplete="current-password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} />
+          </Field>
+          {authError && <Alert>{authError}</Alert>}
+          <Button type="submit" block>
+            Se connecter
+          </Button>
+        </form>
+        <div className="mt-3 flex justify-end">
+          <Button variant="ghost" size="sm" onClick={handleResetPasswordRequest} loading={resetLoading}>
+            Mot de passe oublié ?
+          </Button>
         </div>
-      </div>
+      </AuthCard>
     );
   }
 
@@ -2605,7 +2513,7 @@ const handleCloseReleaseNotesTemporary = () => {
 
         {settingsError && <Alert className="mb-4">{settingsError}</Alert>}
         {page === "remuneration" ? (
-          <Suspense fallback={<p>Chargement…</p>}>
+          <Suspense fallback={<SkeletonList rows={5} />}>
           <CompensationPage
             userId={session.user.id}
             isAdmin={isAdmin}
@@ -2618,7 +2526,7 @@ const handleCloseReleaseNotesTemporary = () => {
           />
           </Suspense>
         ) : page === "transactions" ? (
-          <Suspense fallback={<p>Chargement…</p>}>
+          <Suspense fallback={<SkeletonList rows={5} />}>
           <TransactionsPage
             transactions={transactions}
             loading={transactionsLoading}
@@ -2641,533 +2549,264 @@ const handleCloseReleaseNotesTemporary = () => {
           </Suspense>
         ) : page === "dashboard" ? (
           <>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 12,
-                flexWrap: "wrap",
-                marginBottom: 12,
-              }}
-            >
-              <div>
-                <h2 className="dash-page-title" style={{ marginBottom: 4 }}>
-                  Tableau de bord
-                </h2>
-                <div style={{ fontSize: "0.92rem", color: "var(--color-ink-muted)" }}>
-                  {dashboardCommercialDisplay || "Vue commerciale"}
-                </div>
+            <PageHeader
+              title="Tableau de bord"
+              subtitle={dashboardCommercialDisplay || "Vue commerciale"}
+              actions={
+                (isAdmin || isManager) && (
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="dashboardCommercialFilter" className="text-sm font-semibold whitespace-nowrap text-ink-muted">
+                      Commercial
+                    </label>
+                    <div className="w-72">
+                      <Select
+                        id="dashboardCommercialFilter"
+                        value={dashboardCommercialFilter}
+                        onChange={(e) => setDashboardCommercialFilter(e.target.value)}
+                      >
+                        <option value="Tous">Tous</option>
+                        {dashboardFilterOptions.map((c) => {
+                          const fullName = [c.first_name, c.last_name].filter(Boolean).join(" ").trim();
+                          return (
+                            <option key={c.id} value={c.email}>
+                              {fullName ? `${fullName} — ${c.email}` : c.email}
+                            </option>
+                          );
+                        })}
+                      </Select>
+                    </div>
+                  </div>
+                )
+              }
+            />
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+                <StatCard label="Clients actifs" value={activeCounts.total} />
+                <StatCard label="Vendeurs / bailleurs" value={activeCounts.seller} />
+                <StatCard label="Acquéreurs" value={activeCounts.buyer} />
+                <StatCard label="Après-vente" value={activeCounts.after} />
               </div>
-
-              {(isAdmin || isManager) && (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <label htmlFor="dashboardCommercialFilter" style={{ fontWeight: 600 }}>
-                    Commercial :
-                  </label>
-
-                  <select
-                    id="dashboardCommercialFilter"
-                    value={dashboardCommercialFilter}
-                    onChange={(e) => setDashboardCommercialFilter(e.target.value)}
-                    style={{
-                      minWidth: 220,
-                      padding: "8px 10px",
-                      borderRadius: 10,
-                      border: "1px solid var(--color-line-strong)",
-                      background: "var(--color-surface)",
-                    }}
-                  >
-                    <option value="Tous">Tous</option>
-
-                    {dashboardFilterOptions.map((c) => {
-                      const fullName = [c.first_name, c.last_name]
-                        .filter(Boolean)
-                        .join(" ")
-                        .trim();
-                      const optionLabel = fullName ? `${fullName} — ${c.email}` : c.email;
-
-                      return (
-                        <option key={c.id} value={c.email}>
-                          {optionLabel}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-              )}
-            </div>
-
-            <div className="dash-top">
-              <div className="dash-kpis">
-                <div className="kpi">
-                  <div className="kpi-label">Total clients actifs</div>
-                  <div className="kpi-value">{activeCounts.total}</div>
-                </div>
-                <div className="kpi">
-                  <div className="kpi-label">Vendeur/Bailleur</div>
-                  <div className="kpi-value">{activeCounts.seller}</div>
-                </div>
-                <div className="kpi">
-                  <div className="kpi-label">Acquéreur</div>
-                  <div className="kpi-value">{activeCounts.buyer}</div>
-                </div>
-                <div className="kpi">
-                  <div className="kpi-label">Après-vente</div>
-                  <div className="kpi-value">{activeCounts.after}</div>
-                </div>
-              </div>
-
-              <div className="dash-score">
-                <div className="dash-score-title">Note d’utilisation</div>
-                <div className="dash-score-value">{scoreInfo.score}/10</div>
-                <div className="dash-score-sub">{scoreInfo.reasons.slice(0, 2).join(" ")}</div>
+              <Card>
+                <div className="text-sm font-semibold text-ink-muted">Note d’utilisation</div>
+                <div className="tabular mt-2 font-display text-3xl font-semibold tracking-tight">{scoreInfo.score}/10</div>
+                <p className="mt-1 text-sm text-ink-soft">{scoreInfo.reasons.slice(0, 2).join(" ")}</p>
                 {scoreInfo.tips.length > 0 && (
-                  <div className="dash-score-tips">
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Pour l’améliorer :</div>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  <div className="mt-3 border-t border-line pt-3 text-sm">
+                    <p className="font-semibold text-ink">Pour l’améliorer :</p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink-soft">
                       {scoreInfo.tips.map((t, i) => (
                         <li key={i}>{t}</li>
                       ))}
                     </ul>
                   </div>
                 )}
-              </div>
+              </Card>
             </div>
 
-            <div className="dash-grid">
+            <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
               <DashboardCard
-                title="Vendeur/Bailleur — à relancer (top 5)"
+                title="Vendeurs à relancer"
                 list={top5SellerDue}
                 getFollowupInfo={getFollowupInfo}
                 onGo={() => {
                   setPage("clients");
                   setCurrentTab("vendeur");
                   setStatusFilter("arelancer");
-                  setCommercialFilter(
-                    (isAdmin || isManager) ? dashboardCommercialFilter : "Tous"
-                  );
+                  setCommercialFilter(isAdmin || isManager ? dashboardCommercialFilter : "Tous");
                   setSellerStageFilter("premandat");
                 }}
               />
               <DashboardCard
-                title="Acquéreur — à relancer (top 5)"
+                title="Acquéreurs à relancer"
                 list={top5BuyerDue}
                 getFollowupInfo={getFollowupInfo}
                 onGo={() => {
                   setPage("clients");
                   setCurrentTab("acquereur");
                   setStatusFilter("arelancer");
-                  setCommercialFilter(
-                    (isAdmin || isManager) ? dashboardCommercialFilter : "Tous"
-                  );
+                  setCommercialFilter(isAdmin || isManager ? dashboardCommercialFilter : "Tous");
                 }}
               />
               <DashboardCard
-                title="Après-vente — à relancer (top 5)"
+                title="Après-vente à relancer"
                 list={top5AfterDue}
                 getFollowupInfo={getFollowupInfo}
                 onGo={() => {
                   setPage("clients");
                   setCurrentTab("apresvente");
                   setStatusFilter("arelancer");
-                  setCommercialFilter(
-                    (isAdmin || isManager) ? dashboardCommercialFilter : "Tous"
-                  );
+                  setCommercialFilter(isAdmin || isManager ? dashboardCommercialFilter : "Tous");
                 }}
               />
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                gap: 16,
-                marginTop: 18,
-              }}
-            >
-              <div className="conversion-card">
-                <div className="conversion-card-title">Conversion estimation → mandat</div>
-                <div className="conversion-card-value">
-                  {dashboardStats.txEstimationMandat}%
-                </div>
-                <div className="conversion-card-meta">
-                  {dashboardStats.mandatsFromEstimations} mandat(s) sur{" "}
-                  {dashboardStats.estimations} estimation(s) matures
-                </div>
-                <div className="conversion-card-sub">
-                  Base : estimations datées des 12 derniers mois, hors 90 derniers jours.
-                </div>
-              </div>
-
-              <div className="conversion-card">
-                <div className="conversion-card-title">Conversion mandat → vente par moi</div>
-                <div className="conversion-card-value">{dashboardStats.txMandatVente}%</div>
-                <div className="conversion-card-meta">
-                  {dashboardStats.ventes} vente(s) sur {dashboardStats.mandats} mandat(s)
-                </div>
-                <div className="conversion-card-sub">
-                  Base : tous les dossiers passés sous mandat, y compris ceux déjà basculés en
-                  après-vente.
-                </div>
-              </div>
-
-              <div className="conversion-card">
-                <div className="conversion-card-title">
-                  CA TTC {dashboardStats.year}
-                </div>
-                <div className="conversion-card-value">
-                  {formatCurrency(dashboardStats.caTtc)}
-                </div>
-                <div className="conversion-card-meta">
-                  {dashboardStats.encaissedCount} vente(s) ou location(s) encaissée(s)
-                </div>
-                <div className="conversion-card-sub">
-                  Base : honoraires des ventes conclues et locations encaissées en {dashboardStats.year}, annulées
-                  exclues{dashboardCaUserIds === null ? "" : ", au prorata des parts du ou des commerciaux"}.
-                </div>
-              </div>
-
-              <div className="conversion-card">
-                <div className="conversion-card-title">
-                  CA HT {dashboardStats.year}
-                </div>
-                <div className="conversion-card-value">
-                  {formatCurrency(dashboardStats.caHt)}
-                </div>
-                <div className="conversion-card-meta">
-                  Honoraires HT bruts, avant déductions
-                </div>
-                <div className="conversion-card-sub">
-                  Base : mêmes ventes et locations que le CA TTC.
-                </div>
-              </div>
-
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <StatCard
+                label="Conversion estimation → mandat"
+                value={`${dashboardStats.txEstimationMandat}%`}
+                hint={`${dashboardStats.mandatsFromEstimations} mandat(s) sur ${dashboardStats.estimations} estimation(s) matures`}
+                sub="Base : estimations datées des 12 derniers mois, hors 90 derniers jours."
+              />
+              <StatCard
+                label="Conversion mandat → vente par moi"
+                value={`${dashboardStats.txMandatVente}%`}
+                hint={`${dashboardStats.ventes} vente(s) sur ${dashboardStats.mandats} mandat(s)`}
+                sub="Base : tous les dossiers passés sous mandat, y compris ceux déjà basculés en après-vente."
+              />
+              <StatCard
+                label={`CA TTC ${dashboardStats.year}`}
+                value={formatCurrency(dashboardStats.caTtc)}
+                hint={`${dashboardStats.encaissedCount} vente(s) ou location(s) encaissée(s)`}
+                sub={`Base : honoraires des ventes conclues et locations encaissées en ${dashboardStats.year}, annulées exclues${
+                  dashboardCaUserIds === null ? "" : ", au prorata des parts du ou des commerciaux"
+                }.`}
+              />
+              <StatCard
+                label={`CA HT ${dashboardStats.year}`}
+                value={formatCurrency(dashboardStats.caHt)}
+                hint="Honoraires HT bruts, avant déductions"
+                sub="Base : mêmes ventes et locations que le CA TTC."
+              />
               {dashboardCaUserIds === null ? (
-                <div className="conversion-card">
-                  <div className="conversion-card-title">CA en attente (promesses signées)</div>
-                  <div className="conversion-card-value">{formatCurrency(dashboardPending.feesHt)}</div>
-                  <div className="conversion-card-meta">
-                    {dashboardPending.count} promesse(s) en cours · base nette{" "}
-                    {formatCurrency(dashboardPending.netHt)}
-                  </div>
-                  <div className="conversion-card-sub">Honoraires HT des ventes sous promesse.</div>
-                </div>
+                <StatCard
+                  label="CA en attente (promesses signées)"
+                  value={formatCurrency(dashboardPending.feesHt)}
+                  hint={`${dashboardPending.count} promesse(s) en cours · base nette ${formatCurrency(dashboardPending.netHt)}`}
+                  sub="Honoraires HT des ventes sous promesse."
+                />
               ) : !isAdmin && !isManager ? (
-                <div className="conversion-card">
-                  <div className="conversion-card-title">{projectionLabel(mySettings?.compensation_type)}</div>
-                  <div className="conversion-card-value">{formatCurrency(myProjection.amount_due)}</div>
-                  <div className="conversion-card-meta">
-                    {dashboardPending.count} promesse(s) en cours · part nette {formatCurrency(dashboardPending.shareNetHt)}
-                  </div>
-                  <div className="conversion-card-sub">
-                    {myProjection.incomplete
+                <StatCard
+                  label={projectionLabel(mySettings?.compensation_type)}
+                  value={formatCurrency(myProjection.amount_due)}
+                  hint={`${dashboardPending.count} promesse(s) en cours · part nette ${formatCurrency(dashboardPending.shareNetHt)}`}
+                  sub={
+                    myProjection.incomplete
                       ? "Projection indisponible : vos taux de rémunération ne sont pas encore renseignés."
                       : "Projection sur vos ventes sous promesse, à vos taux actuels" +
-                        (mySettings?.compensation_type === "agent_tva" ? ", TVA comprise." : ".")}
-                  </div>
-                </div>
+                        (mySettings?.compensation_type === "agent_tva" ? ", TVA comprise." : ".")
+                  }
+                />
               ) : (
-                <div className="conversion-card">
-                  <div className="conversion-card-title">CA en attente</div>
-                  <div className="conversion-card-value">{formatCurrency(dashboardPending.shareNetHt)}</div>
-                  <div className="conversion-card-meta">{dashboardPending.count} promesse(s) en cours</div>
-                  <div className="conversion-card-sub">
-                    Projection sur les ventes sous promesse (part de base nette HT).
-                  </div>
-                </div>
+                <StatCard
+                  label="CA en attente"
+                  value={formatCurrency(dashboardPending.shareNetHt)}
+                  hint={`${dashboardPending.count} promesse(s) en cours`}
+                  sub="Projection sur les ventes sous promesse (part de base nette HT)."
+                />
               )}
-
               {isAdmin && (
-                <div className="conversion-card">
-                  <div className="conversion-card-title">Potentiel sous mandat</div>
-                  <div className="conversion-card-value">{formatCurrency(dashboardMandatePotential.feesTtc)}</div>
-                  <div className="conversion-card-meta">
-                    {dashboardMandatePotential.count} mandat(s) en cours · {dashboardMandatePotential.withFees} chiffré(s)
-                  </div>
-                  <div className="conversion-card-sub">Honoraires prévus TTC des fiches sous mandat.</div>
-                </div>
+                <StatCard
+                  label="Potentiel sous mandat"
+                  value={formatCurrency(dashboardMandatePotential.feesTtc)}
+                  hint={`${dashboardMandatePotential.count} mandat(s) en cours · ${dashboardMandatePotential.withFees} chiffré(s)`}
+                  sub="Honoraires prévus TTC des fiches sous mandat."
+                />
               )}
-
             </div>
 
-            <Suspense fallback={<div className="dash-chart-card conversion-card-sub">Chargement du graphique…</div>}>
-            <DashboardChart
-              transactions={transactions}
-              isAdmin={isAdmin}
-              isManager={isManager}
-              userId={session.user.id}
-              teamIds={dashboardFilterOptions.map((p) => p.id)}
-              commercials={dashboardFilterOptions.map((p) => ({ id: p.id, label: getProfileLabel(p) }))}
-              formatCurrency={formatCurrency}
-            />
-            </Suspense>
+            <div className="mt-6">
+              <Suspense fallback={<Skeleton className="h-[420px] w-full rounded-card" />}>
+                <DashboardChart
+                  transactions={transactions}
+                  isAdmin={isAdmin}
+                  isManager={isManager}
+                  userId={session.user.id}
+                  teamIds={dashboardFilterOptions.map((p) => p.id)}
+                  commercials={dashboardFilterOptions.map((p) => ({ id: p.id, label: getProfileLabel(p) }))}
+                  formatCurrency={formatCurrency}
+                />
+              </Suspense>
+            </div>
 
             {(isAdmin || isManager) && (
               <>
-                <div
-                  style={{
-                    marginTop: 26,
-                    border: "1px solid var(--color-line)",
-                    borderRadius: 16,
-                    background: "var(--color-surface)",
-                    padding: 16,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: "1rem",
-                      fontWeight: 700,
-                      marginBottom: 14,
-                    }}
-                  >
-                    Comparatif commerciaux
-                  </div>
-
-                  <style>{`
-                    .cmp-cards { display: none; }
-                    @media (max-width: 1279px) { .cmp-secondary { display: none; } }
-                    @media (max-width: 1023px) {
-                      .cmp-table-wrap { display: none; }
-                      .cmp-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-                    }
-                  `}</style>
-                  <div className="cmp-table-wrap">
-                    <table
-                      style={{
-                        width: "100%",
-                        borderCollapse: "collapse",
-                        fontSize: "0.92rem",
-                      }}
-                    >
+                <h2 className="mt-10 mb-3 text-lg font-semibold text-ink">Comparatif commerciaux</h2>
+                {comparisonRows.length === 0 ? (
+                  <EmptyState title="Aucune donnée disponible" />
+                ) : (
+                  <>
+                    <Table className="hidden lg:block">
                       <thead>
-                        <tr style={{ background: "var(--color-subtle)" }}>
-                         {[
-  { key: "commercial", label: <>Commercial</> },
-  { key: "active", label: <>Clients<br />actifs</>, secondary: true },
-  { key: "estimations", label: <>Estimations</> },
-  { key: "mandats", label: <>Mandats</> },
-  { key: "ventes", label: <>Ventes</> },
-  { key: "tx_est_mandat", label: <>Tx est.<br />→ mandat</> },
-  { key: "tx_mandat_vente", label: <>Tx mandat<br />→ vente</> },
-  { key: "ca_ht", label: <>CA HT</> },
-  { key: "due", label: <>À<br />relancer</> },
-  { key: "late", label: <>Retards<br />&gt; 2j</>, secondary: true },
-].map((h) => (
-  <th
-    key={h.key}
-    className={h.secondary ? "cmp-secondary" : undefined}
-    style={{
-      textAlign: "left",
-      padding: "8px 10px",
-      borderBottom: "1px solid var(--color-line)",
-      whiteSpace: "normal",
-      lineHeight: 1.15,
-      verticalAlign: "bottom",
-    }}
-  >
-    {h.label}
-  </th>
-))}
+                        <tr>
+                          <Th>Commercial</Th>
+                          <Th align="right" className="hidden xl:table-cell">Clients actifs</Th>
+                          <Th align="right">Estimations</Th>
+                          <Th align="right">Mandats</Th>
+                          <Th align="right">Ventes</Th>
+                          <Th align="right">Est. → mandat</Th>
+                          <Th align="right">Mandat → vente</Th>
+                          <Th align="right">CA HT</Th>
+                          <Th align="right">À relancer</Th>
+                          <Th align="right" className="hidden xl:table-cell">Retards &gt; 2 j</Th>
                         </tr>
                       </thead>
                       <tbody>
-                        {comparisonRows.map((row, idx) => (
-                          <tr
-  key={row.id}
-  style={{
-    background: idx % 2 === 0 ? "var(--color-surface)" : "var(--color-surface)",
-  }}
->
-  <td
-    style={{
-      padding: "8px 10px",
-      borderBottom: "1px solid var(--color-line)",
-      fontWeight: 600,
-      maxWidth: 180,
-      whiteSpace: "nowrap",
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-    }}
-    title={row.label}
-  >
-    {row.label}
-  </td>
-  <td className="cmp-secondary" style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
-    {row.activeCount}
-  </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
-    {row.estimations}
-  </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
-    {row.mandats}
-  </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
-    {row.ventes}
-  </td>
-  <td
-    style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}
-    title={`${row.mandatsFromEstimations} mandat(s) sur ${row.estimations} estimation(s) matures`}
-  >
-    {formatPercent(row.txEstimationMandat)}
-  </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
-    {formatPercent(row.txMandatVente)}
-  </td>
-  <td
-    style={{
-      padding: "8px 10px",
-      borderBottom: "1px solid var(--color-line)",
-      fontWeight: 600,
-      whiteSpace: "nowrap",
-    }}
-  >
-    {formatCurrency(row.caHt)}
-  </td>
-  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--color-line)" }}>
-    {row.dueCount}
-  </td>
-  <td
-    className="cmp-secondary"
-    style={{
-      padding: "8px 10px",
-      borderBottom: "1px solid var(--color-line)",
-      color: row.late2Count > 0 ? "var(--color-danger)" : "var(--color-ink)",
-      fontWeight: row.late2Count > 0 ? 700 : 400,
-    }}
-  >
-    {row.late2Count}
-  </td>
-</tr>
+                        {comparisonRows.map((row) => (
+                          <Tr key={row.id}>
+                            <Td className="max-w-56 truncate font-semibold" title={row.label}>
+                              {row.label}
+                            </Td>
+                            <Td align="right" className="hidden xl:table-cell">{row.activeCount}</Td>
+                            <Td align="right">{row.estimations}</Td>
+                            <Td align="right">{row.mandats}</Td>
+                            <Td align="right">{row.ventes}</Td>
+                            <Td align="right" title={`${row.mandatsFromEstimations} mandat(s) sur ${row.estimations} estimation(s) matures`}>
+                              {formatPercent(row.txEstimationMandat)}
+                            </Td>
+                            <Td align="right">{formatPercent(row.txMandatVente)}</Td>
+                            <Td align="right" className="font-semibold whitespace-nowrap">
+                              {formatCurrency(row.caHt)}
+                            </Td>
+                            <Td align="right">{row.dueCount}</Td>
+                            <Td align="right" className={cx("hidden xl:table-cell", row.late2Count > 0 && "font-semibold text-danger")}>
+                              {row.late2Count}
+                            </Td>
+                          </Tr>
                         ))}
                       </tbody>
-                    </table>
-                  </div>
-
-                  <div className="cmp-cards">
-                    {comparisonRows.map((row) => (
-                      <div
-                        key={row.id}
-                        style={{ border: "1px solid var(--color-line)", borderRadius: 12, padding: 12, fontSize: "0.88rem" }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                          <strong>{row.label}</strong>
-                          <strong>{formatCurrency(row.caHt)}</strong>
-                        </div>
-                        <div style={{ color: "var(--color-ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
-                          {row.activeCount} actifs · {row.estimations} estim. · {row.mandats} mandats ·{" "}
-                          {row.ventes} ventes
-                          <br />
-                          Est. → mandat {formatPercent(row.txEstimationMandat)} · Mandat → vente{" "}
-                          {formatPercent(row.txMandatVente)}
-                          <br />
-                          À relancer {row.dueCount}
-                          {row.late2Count > 0 && (
-                            <span style={{ color: "var(--color-danger)", fontWeight: 700 }}> · {row.late2Count} en retard</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    marginTop: 18,
-                    border: "1px solid var(--color-line)",
-                    borderRadius: 16,
-                    background: "var(--color-surface)",
-                    padding: 16,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: "1rem",
-                      fontWeight: 700,
-                      marginBottom: 14,
-                    }}
-                  >
-                    CA HT par commercial ({dashboardStats.year})
-                  </div>
-
-                  {comparisonRows.length === 0 ? (
-                    <div style={{ color: "var(--color-ink-muted)" }}>Aucune donnée disponible.</div>
-                  ) : (
-                    <div
-                      style={{
-                        display: "grid",
-                        gap: 12,
-                      }}
-                    >
-                      {comparisonRows.map((row) => {
-                        const ratio =
-                          comparisonMaxCa > 0 ? Math.max(4, (row.caHt / comparisonMaxCa) * 100) : 0;
-
-                        return (
-                          <div
-                            key={row.id}
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "220px 1fr 140px",
-                              gap: 12,
-                              alignItems: "center",
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: "0.92rem",
-                                fontWeight: 600,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                              title={row.label}
-                            >
-                              {row.label}
-                            </div>
-
-                            <div
-                              style={{
-                                width: "100%",
-                                height: 18,
-                                background: "var(--color-subtle)",
-                                borderRadius: 999,
-                                overflow: "hidden",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: `${ratio}%`,
-                                  height: "100%",
-                                  background: "var(--color-ink)",
-                                  borderRadius: 999,
-                                }}
-                              />
-                            </div>
-
-                            <div
-                              style={{
-                                textAlign: "right",
-                                fontWeight: 600,
-                                fontSize: "0.92rem",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {formatCurrency(row.caHt)}
-                            </div>
+                    </Table>
+                    <ListRows className="lg:hidden">
+                      {comparisonRows.map((row) => (
+                        <li key={row.id} className="space-y-1 px-4 py-4 text-sm">
+                          <div className="flex justify-between gap-3">
+                            <strong className="text-ink">{row.label}</strong>
+                            <strong className="tabular text-ink">{formatCurrency(row.caHt)}</strong>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                          <p className="text-ink-muted">
+                            {row.activeCount} actifs · {row.estimations} estim. · {row.mandats} mandats · {row.ventes} ventes
+                          </p>
+                          <p className="text-ink-muted">
+                            Est. → mandat {formatPercent(row.txEstimationMandat)} · Mandat → vente {formatPercent(row.txMandatVente)}
+                          </p>
+                          <p className="text-ink-muted">
+                            À relancer {row.dueCount}
+                            {row.late2Count > 0 && <span className="font-semibold text-danger"> · {row.late2Count} en retard</span>}
+                          </p>
+                        </li>
+                      ))}
+                    </ListRows>
+
+                    <Card title={`CA HT par commercial (${dashboardStats.year})`} className="mt-6">
+                      <ul className="space-y-3">
+                        {comparisonRows.map((row) => {
+                          const ratio = comparisonMaxCa > 0 ? Math.max(4, (row.caHt / comparisonMaxCa) * 100) : 0;
+                          return (
+                            <li key={row.id} className="grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-3 sm:grid-cols-[14rem_1fr_9rem]">
+                              <span className="truncate text-sm font-semibold" title={row.label}>
+                                {row.label}
+                              </span>
+                              <span className="h-3 overflow-hidden rounded-full bg-canvas">
+                                <span className="block h-full rounded-full bg-primary" style={{ width: `${ratio}%` }} />
+                              </span>
+                              <span className="tabular text-right text-sm font-semibold whitespace-nowrap">{formatCurrency(row.caHt)}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </Card>
+                  </>
+                )}
               </>
             )}
           </>
@@ -3269,6 +2908,8 @@ const handleCloseReleaseNotesTemporary = () => {
       />
 
       <MandateModal client={mandateClient} onCancel={() => setMandateClient(null)} onConfirm={confirmPassMandat} />
+
+      <SignSaleModal tx={signSaleTx} today={getTodayStr()} onCancel={() => setSignSaleTx(null)} onConfirm={confirmSignSale} />
 
       <ClosureModal
         closureClient={closureClient}

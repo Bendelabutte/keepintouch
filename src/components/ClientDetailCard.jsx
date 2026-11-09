@@ -2,12 +2,10 @@
 // Contenu d'une fiche client : frise et sections par étape (vendeur), informations, relance,
 // actions, historique. Utilisé dépliée dans la liste et sur la page /clients/:id.
 import React from "react";
-import { Link } from "react-router";
 import { hasNoFollowUp, sellerPhaseActions } from "../lib/relance";
 import { closedDate, closedDossierDates, closureReasonLabel } from "../lib/clientStatus";
 import { formatPhone } from "../lib/contact";
 import { MANDATE_TYPES, sellerTimeline, visibleSellerSections } from "../lib/stages";
-import { clientPath } from "../lib/routes";
 import { Badge, Button, Icon, Input, Textarea, cx, focusRing } from "./ui";
 
 const PHASE_ACTION_TITLES = {
@@ -57,7 +55,7 @@ function Section({ title, icon, children, tone = "default", actions }) {
     <section className={cx("rounded-card border p-4", tone === "closed" ? "border-line-strong bg-subtle" : "border-line bg-surface")}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-bold text-ink">
-          {icon && <Icon name={icon} size={16} className="text-primary" />}
+          {icon && <Icon name={icon} size={16} className="text-accent" />}
           {title}
         </h3>
         {actions}
@@ -84,7 +82,7 @@ function Facts({ items }) {
 
 const QUICK_DAYS = [7, 14, 21, 30];
 
-const linkClass = cx("rounded font-semibold text-primary hover:underline", focusRing);
+const linkClass = cx("rounded font-semibold text-accent hover:underline", focusRing);
 
 export default function ClientDetailCard({
   c,
@@ -145,23 +143,19 @@ export default function ClientDetailCard({
             {(isAdmin || isManager) && <div className="text-xs text-ink-muted">Commercial : {getCommercialEmail(c.owner_id) || "—"}</div>}
             <div className="flex flex-wrap gap-x-4 gap-y-1">
               {c.phone && (
-                <a href={`tel:${c.phone}`} className={cx("inline-flex items-center gap-1.5 rounded hover:text-primary", focusRing)}>
+                <a href={`tel:${c.phone}`} className={cx("inline-flex items-center gap-1.5 rounded hover:text-accent", focusRing)}>
                   <Icon name="phone" size={15} className="text-ink-muted" />
                   {formatPhone(c.phone)}
                 </a>
               )}
               {c.email && (
-                <a href={`mailto:${c.email}`} className={cx("inline-flex min-w-0 items-center gap-1.5 rounded hover:text-primary", focusRing)}>
+                <a href={`mailto:${c.email}`} className={cx("inline-flex min-w-0 items-center gap-1.5 rounded hover:text-accent", focusRing)}>
                   <Icon name="mail" size={15} className="text-ink-muted" />
                   <span className="truncate">{c.email}</span>
                 </a>
               )}
             </div>
           </div>
-          <Link to={clientPath(c.id)} className={cx("inline-flex items-center gap-1 text-sm", linkClass)}>
-            Ouvrir la fiche
-            <Icon name="chevronRight" size={16} />
-          </Link>
         </div>
       )}
 
@@ -313,8 +307,8 @@ export default function ClientDetailCard({
           <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
             <Icon name="clock" size={16} className="text-ink-muted" />
             <span className="font-semibold text-ink">{nextLabel}</span>
-            {delayLabel && <Badge tone={diffDays < 0 ? "danger" : diffDays === 0 ? "accent" : "info"}>{delayLabel}</Badge>}
-            {nextNote && <Badge tone="primary">{nextNote}</Badge>}
+            {delayLabel && <Badge tone={diffDays < 0 ? "danger" : "info"}>{delayLabel}</Badge>}
+            {nextNote && <Badge tone="accent">{nextNote}</Badge>}
           </div>
         )}
 
@@ -337,7 +331,7 @@ export default function ClientDetailCard({
               onChange={(e) => setNextDueForClient(c.id, e.target.value)}
             />
             {QUICK_DAYS.map((d) => (
-              <Button key={d} size="sm" variant="secondary" onClick={() => setNextDueForClient(c.id, addDays(new Date(), d))} title={`Dans ${d} jours`}>
+              <Button key={d} size="xs" variant="secondary" onClick={() => setNextDueForClient(c.id, addDays(new Date(), d))} title={`Dans ${d} jours`}>
                 +{d} j
               </Button>
             ))}
@@ -367,7 +361,7 @@ export default function ClientDetailCard({
                 <Button
                   key={action.key}
                   size="sm"
-                  variant={action.primary ? "accent" : "secondary"}
+                  variant={action.primary ? "primary" : "secondary"}
                   onClick={() => phaseHandlers[action.key](c)}
                   title={action.hint || PHASE_ACTION_TITLES[action.key]}
                 >
@@ -401,7 +395,7 @@ export default function ClientDetailCard({
           <ol className="relative space-y-3 border-l border-line pl-4">
             {comments.map((n) => (
               <li key={n.id} className="relative text-sm">
-                <span aria-hidden="true" className="absolute top-1.5 -left-[21px] size-2.5 rounded-full bg-primary-line ring-2 ring-surface" />
+                <span aria-hidden="true" className="absolute top-1.5 -left-[21px] size-2.5 rounded-full bg-line-strong ring-2 ring-surface" />
                 <span className="tabular text-xs font-semibold text-ink-muted">{formatDate(n.created_at)}</span>
                 <p className="whitespace-pre-line text-ink-soft">{n.body}</p>
               </li>

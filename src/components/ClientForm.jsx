@@ -5,7 +5,7 @@ import React, { useState } from "react";
 import AddressAutocomplete from "./AddressAutocomplete";
 import { contactError, emailError, formatPhoneInput } from "../lib/contact";
 import { MANDATE_TYPES } from "../lib/stages";
-import { Field, Icon, Input, Select, Textarea, controlClasses, cx } from "./ui";
+import { Field, Icon, Input, Select, Textarea, cx } from "./ui";
 
 const PROPERTY_KINDS = ["Appartement", "Maison", "Terrain", "Local commercial", "Immeuble", "Autre"];
 const HORIZONS = ["Court terme", "Moyen terme", "Long terme", "Estimation sans projet"];
@@ -58,7 +58,6 @@ export default function ClientForm({ values, onChange, mode = "create", submitte
         <AddressAutocomplete
           value={v[field] || ""}
           placeholder="Commencez à taper l’adresse…"
-          className={controlClasses(false)}
           onChange={(text) => onChange(field, text)}
           onSelect={(a) => onChange(field, a.label)}
         />

@@ -1,6 +1,27 @@
 // src/components/AdminModal.jsx
 import React from "react";
 import { RELANCE_PROMESSE_DAYS } from "../lib/relance";
+import { Alert, Badge, Button, Card, Checkbox, Field, Input, Modal, Select } from "./ui";
+
+const ROLE_LABELS = { admin: "Administrateur", manager: "Manager", user: "Commercial" };
+const CATEGORY_TITLES = { seller: "Vendeur / bailleur", buyer: "Acquéreur", after: "Après-vente" };
+
+function UserRow({ p, isMe, adminBusy, children }) {
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+      <div className="min-w-0">
+        <div className="truncate font-semibold text-ink">{p.email}</div>
+        <div className="text-sm text-ink-muted">
+          {ROLE_LABELS[p.role || "user"] || p.role}
+          {isMe ? " · vous" : ""}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2" aria-busy={adminBusy || undefined}>
+        {children}
+      </div>
+    </li>
+  );
+}
 
 export default function AdminModal({
   isAdmin,
@@ -28,324 +49,223 @@ export default function AdminModal({
   saveAdminSettings,
   onOpenCompensation,
 }) {
-  if (!showAdminPanel || !isAdmin) return null;
+  if (!isAdmin) return null;
 
   const activeProfiles = profiles.filter((p) => p.is_active !== false);
   const inactiveProfiles = profiles.filter((p) => p.is_active === false);
+  const close = () => setShowAdminPanel(false);
 
   return (
-    <div className="admin-modal-backdrop" onClick={() => setShowAdminPanel(false)}>
-      <div className="admin-modal admin-modal-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="admin-modal-head">
-          <div>
-            <h2>Paramètres administrateur</h2>
-            <p className="admin-modal-sub">
-              Gère les invitations, les utilisateurs, les réaffectations, les délais de relance et les emails automatiques.
-            </p>
-          </div>
-
-          <button className="btn-outline" type="button" onClick={() => setShowAdminPanel(false)}>
+    <Modal
+      open={showAdminPanel}
+      size="xl"
+      busy={adminBusy}
+      title="Paramètres administrateur"
+      description="Invitations, utilisateurs, réaffectations, délais de relance et emails automatiques."
+      onClose={close}
+      footer={
+        <>
+          <Button variant="secondary" onClick={close} disabled={adminBusy}>
             Fermer
-          </button>
-        </div>
+          </Button>
+          <Button onClick={saveAdminSettings} loading={adminBusy}>
+            Enregistrer les paramètres
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        {adminMsg && <Alert tone={adminMsg.startsWith("Erreur") ? "danger" : "success"}>{adminMsg}</Alert>}
 
-        {adminMsg && (
-          <div className={"admin-alert " + (adminMsg.startsWith("Erreur") ? "admin-alert-error" : "admin-alert-success")}>
-            {adminMsg}
-          </div>
-        )}
-
-        <div className="admin-grid">
-          <section className="admin-card">
-            <div className="admin-card-title">Inviter un utilisateur</div>
-            <div className="admin-card-sub">
-              Accès sur invitation uniquement. L’inscription libre est désactivée.
-            </div>
-
-            <div className="admin-form-grid">
-              <label>
-                Email
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="utilisateur@exemple.com"
-                />
-              </label>
-
-              <label>
-                Rôle
-                <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <Card title="Inviter un utilisateur" description="Accès sur invitation uniquement. L’inscription libre est désactivée.">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_11rem]">
+              <Field label="Email">
+                <Input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="utilisateur@exemple.com" />
+              </Field>
+              <Field label="Rôle">
+                <Select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
                   <option value="user">Commercial</option>
                   <option value="manager">Manager</option>
                   <option value="admin">Admin</option>
-                </select>
-              </label>
+                </Select>
+              </Field>
             </div>
-
-            <div className="admin-actions-row">
-              <button type="button" className="btn-primary" disabled={adminBusy} onClick={handleInviteUser}>
+            <div className="mt-4 flex justify-end">
+              <Button onClick={handleInviteUser} disabled={adminBusy}>
                 Inviter l’utilisateur
-              </button>
+              </Button>
             </div>
-          </section>
+          </Card>
 
-          <section className="admin-card">
-            <div className="admin-card-title">Réaffecter des clients</div>
-            <div className="admin-card-sub">
-              Transfère le portefeuille d’un utilisateur vers un autre.
-            </div>
-
-            <div className="admin-form-grid">
-              <label>
-                De
-                <select value={reassignFrom} onChange={(e) => setReassignFrom(e.target.value)}>
+          <Card title="Réaffecter des clients" description="Transfère le portefeuille d’un utilisateur vers un autre.">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="De">
+                <Select value={reassignFrom} onChange={(e) => setReassignFrom(e.target.value)}>
                   <option value="">—</option>
                   {profiles.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.email}
                     </option>
                   ))}
-                </select>
-              </label>
-
-              <label>
-                Vers
-                <select value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
+                </Select>
+              </Field>
+              <Field label="Vers">
+                <Select value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
                   <option value="">—</option>
                   {activeProfiles.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.email}
                     </option>
                   ))}
-                </select>
-              </label>
+                </Select>
+              </Field>
             </div>
-
-            <div className="admin-actions-row">
-              <button type="button" className="btn-outline" disabled={adminBusy} onClick={reassignClientsToUser}>
+            <div className="mt-4 flex justify-end">
+              <Button variant="secondary" onClick={reassignClientsToUser} disabled={adminBusy}>
                 Réaffecter
-              </button>
+              </Button>
             </div>
-          </section>
+          </Card>
+        </div>
 
-          <section className="admin-card admin-card-users">
-            <div className="admin-card-title">Utilisateurs</div>
-            <div className="admin-card-sub">
-              Désactive un accès sans supprimer les données. Ton propre compte ne peut pas être désactivé.
+        <Card
+          title="Utilisateurs"
+          description="Désactiver un accès ne supprime aucune donnée. Votre propre compte ne peut pas être désactivé."
+        >
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-ink-muted">Actifs</h3>
+              <ul className="divide-y divide-line rounded-control border border-line">
+                {activeProfiles.map((p) => {
+                  const isMe = p.id === session.user.id;
+                  return (
+                    <UserRow key={p.id} p={p} isMe={isMe} adminBusy={adminBusy}>
+                      <Button variant="secondary" size="xs" disabled={adminBusy} onClick={() => onOpenCompensation(p)}>
+                        Rémunération
+                      </Button>
+                      {isMe ? (
+                        <Badge tone="muted">Connecté</Badge>
+                      ) : (
+                        <Button variant="danger" size="xs" disabled={adminBusy} onClick={() => toggleUserActive(p.id, false)}>
+                          Désactiver
+                        </Button>
+                      )}
+                    </UserRow>
+                  );
+                })}
+              </ul>
             </div>
-
-            <div className="admin-users-wrap">
-              <div>
-                <div className="admin-list-title">Actifs</div>
-                <div className="admin-users-list">
-                  {activeProfiles.map((p) => (
-                    <div className="admin-user-row" key={p.id}>
-                      <div className="admin-user-main">
-                        <div className="admin-user-email">{p.email}</div>
-                        <div className="admin-user-meta">
-                          {p.role || "user"}
-                          {p.id === session.user.id ? " • toi" : ""}
-                        </div>
-                      </div>
-
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          className="btn-outline-small"
-                          disabled={adminBusy}
-                          onClick={() => onOpenCompensation(p)}
-                        >
-                          Rémunération
-                        </button>
-                        {p.id !== session.user.id ? (
-                          <button
-                            type="button"
-                            className="btn-outline-small"
-                            disabled={adminBusy}
-                            onClick={() => toggleUserActive(p.id, false)}
-                          >
-                            Désactiver
-                          </button>
-                        ) : (
-                          <span className="admin-chip admin-chip-neutral">Connecté</span>
-                        )}
-                      </div>
-                    </div>
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-ink-muted">Désactivés</h3>
+              {inactiveProfiles.length === 0 ? (
+                <p className="rounded-control border border-dashed border-line-strong px-4 py-3 text-sm text-ink-muted">
+                  Aucun utilisateur désactivé.
+                </p>
+              ) : (
+                <ul className="divide-y divide-line rounded-control border border-line">
+                  {inactiveProfiles.map((p) => (
+                    <UserRow key={p.id} p={p} adminBusy={adminBusy}>
+                      <Button variant="secondary" size="xs" disabled={adminBusy} onClick={() => toggleUserActive(p.id, true)}>
+                        Réactiver
+                      </Button>
+                    </UserRow>
                   ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="admin-list-title">Désactivés</div>
-                <div className="admin-users-list">
-                  {inactiveProfiles.length === 0 ? (
-                    <div className="admin-empty">Aucun utilisateur désactivé.</div>
-                  ) : (
-                    inactiveProfiles.map((p) => (
-                      <div className="admin-user-row" key={p.id}>
-                        <div className="admin-user-main">
-                          <div className="admin-user-email">{p.email}</div>
-                          <div className="admin-user-meta">{p.role || "user"}</div>
-                        </div>
-
-                        <button
-                          type="button"
-                          className="btn-outline-small"
-                          disabled={adminBusy}
-                          onClick={() => toggleUserActive(p.id, true)}
-                        >
-                          Réactiver
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
+                </ul>
+              )}
             </div>
-          </section>
+          </div>
+        </Card>
 
-          <section className="admin-card admin-card-delays">
-            <div className="admin-card-title">Délais de relance</div>
-            <div className="admin-card-sub">
-              1ère relance = délai après création. Relance par défaut = si l’utilisateur valide sans date.
-            </div>
-
-            <div className="admin-delay-grid">
-              {["seller", "buyer", "after"].map((cat) => (
-                <div key={cat} className="admin-delay-box">
-                  <div className="admin-delay-title">
-                    {cat === "seller" ? "Vendeur/Bailleur" : cat === "buyer" ? "Acquéreur" : "Après-vente"}
-                  </div>
-
-                  <label>
-                    1ère relance (jours)
-                    <input
-                      type="number"
-                      min="0"
-                      value={relanceConfig?.[cat]?.initial_days ?? 15}
-                      onChange={(e) => updateRelanceCfgField(cat, "initial_days", e.target.value)}
-                    />
-                  </label>
-
-                  <label>
-                    Relance par défaut (jours)
-                    <input
-                      type="number"
-                      min="0"
-                      value={relanceConfig?.[cat]?.default_next_days ?? 14}
-                      onChange={(e) => updateRelanceCfgField(cat, "default_next_days", e.target.value)}
-                    />
-                  </label>
-                </div>
-              ))}
-
-              <div className="admin-delay-box">
-                <div className="admin-delay-title">Vendeur sous promesse</div>
-                <label>
-                  Relance sous promesse (jours)
-                  <input
+        <Card
+          title="Délais de relance"
+          description="1re relance = délai après création. Relance par défaut = si l’utilisateur valide sans date."
+        >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {["seller", "buyer", "after"].map((cat) => (
+              <div key={cat} className="space-y-3 rounded-control border border-line p-4">
+                <h3 className="text-sm font-semibold text-ink">{CATEGORY_TITLES[cat]}</h3>
+                <Field label="1re relance (jours)">
+                  <Input
                     type="number"
                     min="0"
-                    value={relanceConfig?.promise?.default_next_days ?? RELANCE_PROMESSE_DAYS}
-                    onChange={(e) => updateRelanceCfgField("promise", "default_next_days", e.target.value)}
+                    value={relanceConfig?.[cat]?.initial_days ?? 15}
+                    onChange={(e) => updateRelanceCfgField(cat, "initial_days", e.target.value)}
                   />
-                </label>
-                <div className="admin-card-sub">
-                  Après la date de promesse, puis entre deux relances tant que la vente n’est pas signée.
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="admin-card admin-card-delays">
-            <div className="admin-card-title">Emails automatiques</div>
-            <div className="admin-card-sub">
-              Réglez simplement les alertes email envoyées aux commerciaux.
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 10 }}>
-              <div className="dash-card" style={{ padding: 12 }}>
-                <div className="dash-title" style={{ marginBottom: 10 }}>
-                  Types d’emails
-                </div>
-
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.9rem", marginBottom: 10 }}>
-                  <input
-                    type="checkbox"
-                    checked={!!emailNotificationConfig?.tomorrow_enabled}
-                    onChange={(e) => updateEmailNotificationField("tomorrow_enabled", e.target.checked)}
-                  />
-                  Email “relance prévue demain”
-                </label>
-
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.9rem", marginBottom: 10 }}>
-                  <input
-                    type="checkbox"
-                    checked={!!emailNotificationConfig?.late_enabled}
-                    onChange={(e) => updateEmailNotificationField("late_enabled", e.target.checked)}
-                  />
-                  Email “relance en retard”
-                </label>
-
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.9rem" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!emailNotificationConfig?.global_enabled}
-                    onChange={(e) => updateEmailNotificationField("global_enabled", e.target.checked)}
-                  />
-                  Alerte globale
-                </label>
-              </div>
-
-              <div className="dash-card" style={{ padding: 12 }}>
-                <div className="dash-title" style={{ marginBottom: 10 }}>
-                  Seuils
-                </div>
-
-                <label style={{ fontSize: "0.85rem", display: "block", marginBottom: 8 }}>
-                  Retard individuel (jours)
-                  <input
+                </Field>
+                <Field label="Relance par défaut (jours)">
+                  <Input
                     type="number"
-                    min="1"
-                    value={emailNotificationConfig?.late_days ?? 3}
-                    onChange={(e) => updateEmailNotificationField("late_days", e.target.value)}
-                    style={{ width: "100%", marginTop: 4 }}
+                    min="0"
+                    value={relanceConfig?.[cat]?.default_next_days ?? 14}
+                    onChange={(e) => updateRelanceCfgField(cat, "default_next_days", e.target.value)}
                   />
-                </label>
-
-                <label style={{ fontSize: "0.85rem", display: "block", marginBottom: 8 }}>
-                  Alerte globale à partir de (dossiers)
-                  <input
-                    type="number"
-                    min="1"
-                    value={emailNotificationConfig?.global_threshold ?? 3}
-                    onChange={(e) => updateEmailNotificationField("global_threshold", e.target.value)}
-                    style={{ width: "100%", marginTop: 4 }}
-                  />
-                </label>
-
-                <label style={{ fontSize: "0.85rem", display: "block" }}>
-                  Fréquence alerte globale (tous les X jours)
-                  <input
-                    type="number"
-                    min="1"
-                    value={emailNotificationConfig?.global_frequency_days ?? 1}
-                    onChange={(e) => updateEmailNotificationField("global_frequency_days", e.target.value)}
-                    style={{ width: "100%", marginTop: 4 }}
-                  />
-                </label>
+                </Field>
               </div>
+            ))}
+            <div className="space-y-3 rounded-control border border-line p-4">
+              <h3 className="text-sm font-semibold text-ink">Vendeur sous promesse</h3>
+              <Field label="Relance (jours)" hint="Après la date de promesse, puis entre deux relances jusqu’à l’acte.">
+                <Input
+                  type="number"
+                  min="0"
+                  value={relanceConfig?.promise?.default_next_days ?? RELANCE_PROMESSE_DAYS}
+                  onChange={(e) => updateRelanceCfgField("promise", "default_next_days", e.target.value)}
+                />
+              </Field>
             </div>
-          </section>
-        </div>
+          </div>
+        </Card>
 
-        <div className="admin-actions-row" style={{ marginTop: 16 }}>
-          <button className="btn-primary" type="button" onClick={saveAdminSettings} disabled={adminBusy}>
-            Enregistrer les paramètres
-          </button>
-        </div>
+        <Card title="Emails automatiques" description="Alertes email envoyées aux commerciaux.">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <div>
+              <h3 className="mb-1 text-sm font-semibold text-ink-muted">Types d’emails</h3>
+              <Checkbox
+                label="Email « relance prévue demain »"
+                checked={!!emailNotificationConfig?.tomorrow_enabled}
+                onChange={(e) => updateEmailNotificationField("tomorrow_enabled", e.target.checked)}
+              />
+              <Checkbox
+                label="Email « relance en retard »"
+                checked={!!emailNotificationConfig?.late_enabled}
+                onChange={(e) => updateEmailNotificationField("late_enabled", e.target.checked)}
+              />
+              <Checkbox
+                label="Alerte globale"
+                checked={!!emailNotificationConfig?.global_enabled}
+                onChange={(e) => updateEmailNotificationField("global_enabled", e.target.checked)}
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:grid-cols-1">
+              <Field label="Retard individuel (jours)">
+                <Input
+                  type="number"
+                  min="1"
+                  value={emailNotificationConfig?.late_days ?? 3}
+                  onChange={(e) => updateEmailNotificationField("late_days", e.target.value)}
+                />
+              </Field>
+              <Field label="Alerte globale à partir de (dossiers)">
+                <Input
+                  type="number"
+                  min="1"
+                  value={emailNotificationConfig?.global_threshold ?? 3}
+                  onChange={(e) => updateEmailNotificationField("global_threshold", e.target.value)}
+                />
+              </Field>
+              <Field label="Fréquence de l’alerte globale (jours)">
+                <Input
+                  type="number"
+                  min="1"
+                  value={emailNotificationConfig?.global_frequency_days ?? 1}
+                  onChange={(e) => updateEmailNotificationField("global_frequency_days", e.target.value)}
+                />
+              </Field>
+            </div>
+          </div>
+        </Card>
       </div>
-    </div>
+    </Modal>
   );
 }

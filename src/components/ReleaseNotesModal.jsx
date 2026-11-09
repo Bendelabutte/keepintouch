@@ -6,8 +6,16 @@ import { Button, Modal } from "./ui";
 // Version 4.0 : textes provisoires, à réécrire en fin de projet.
 const NOTES = [
   {
+    title: "Transactions modifiables jusqu’à la validation",
+    text: "promesse, vente actée ou location : vous corrigez montants, déductions et répartition tant que l’administrateur n’a pas validé. Le badge « À valider » ou « Validée » l’indique sur chaque transaction.",
+  },
+  {
+    title: "Acte signé : montants confirmés",
+    text: "la fenêtre de l’acte reprend le prix et les honoraires de la promesse ; confirmez-les en un clic ou corrigez-les s’ils ont changé.",
+  },
+  {
     title: "Nouvelle interface",
-    text: "un menu fixe (Clients, Transactions, Rémunération, Tableau de bord), de vraies adresses pour chaque page et le bouton Retour du navigateur qui fonctionne.",
+    text: "la même présentation que les autres outils de la suite : menu en haut de page (Clients, Transactions, Rémunération, Tableau de bord), une adresse par page et le bouton Retour du navigateur qui fonctionne.",
   },
   {
     title: "Créer une fiche par type",

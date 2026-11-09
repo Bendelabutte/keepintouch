@@ -96,7 +96,7 @@ export default function Dropdown({ trigger, triggerClassName, triggerLabel, item
             }
           }}
           className={cx(
-            "absolute z-40 min-w-60 rounded-card border border-line bg-surface p-1.5 shadow-pop animate-[kit-fade-in_120ms_ease-out]",
+            "absolute z-40 min-w-56 rounded-card border border-line bg-surface p-1.5 shadow-lg",
             placement === "top" ? "bottom-full mb-2" : "top-full mt-1.5",
             align === "right" ? "right-0" : "left-0"
           )}
@@ -112,15 +112,15 @@ export default function Dropdown({ trigger, triggerClassName, triggerLabel, item
               tabIndex={-1}
               onClick={() => select(item)}
               className={cx(
-                "flex w-full items-start gap-3 rounded-[8px] px-3 py-2 text-left text-sm outline-none transition-colors",
-                "hover:bg-subtle focus-visible:bg-primary-soft",
+                "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none transition",
+                "hover:bg-canvas focus-visible:bg-accent-soft focus-visible:text-accent",
                 item.tone === "danger" ? "text-danger" : "text-ink"
               )}
             >
-              {item.icon && <Icon name={item.icon} className="mt-0.5 text-ink-muted" />}
+              {item.icon && <Icon name={item.icon} className="text-ink-muted" />}
               <span className="min-w-0">
                 <span className="block font-semibold">{item.label}</span>
-                {item.description && <span className="block text-xs text-ink-muted">{item.description}</span>}
+                {item.description && <span className="block text-sm font-normal text-ink-muted">{item.description}</span>}
               </span>
             </button>
           ))}

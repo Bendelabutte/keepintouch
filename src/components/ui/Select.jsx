@@ -2,32 +2,26 @@ import React, { forwardRef } from "react";
 import { controlClasses, cx } from "./cx";
 import { useControlProps } from "./field";
 
-// Liste déroulante native (accessible, mobile), habillée comme les champs.
+const CHEVRON =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E\")";
+
+// Liste déroulante native. Placée dans un <Field>, elle reprend son id, son aide et son erreur.
 const Select = forwardRef(function Select({ className = "", children, ...props }, ref) {
   const { isInvalid, rest, ...aria } = useControlProps(props);
   return (
-    <div className="relative">
-      <select
-        ref={ref}
-        className={cx(controlClasses(isInvalid), "appearance-none pr-9", className)}
-        {...aria}
-        {...rest}
-      >
-        {children}
-      </select>
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 24 24"
-        className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-ink-muted"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="m6 9 6 6 6-6" />
-      </svg>
-    </div>
+    <select
+      ref={ref}
+      className={cx(
+        controlClasses(isInvalid),
+        "cursor-pointer appearance-none bg-[length:1rem] bg-[right_0.875rem_center] bg-no-repeat pr-10",
+        className
+      )}
+      style={{ backgroundImage: CHEVRON }}
+      {...aria}
+      {...rest}
+    >
+      {children}
+    </select>
   );
 });
 

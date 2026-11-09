@@ -7,7 +7,7 @@ import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "../lib/fetchAll";
 import { todayStr } from "../lib/dates";
 import { parseDecimal } from "../lib/transactionDraft";
-import { round2 } from "../lib/transactions";
+import { isValidated, round2, validationLabel } from "../lib/transactions";
 import {
   COMPENSATION_TYPES,
   INVOICE_STATUS_LABELS,
@@ -23,38 +23,17 @@ import {
   vatRateFor,
 } from "../lib/compensation";
 import CompensationSettingsModal from "./CompensationSettingsModal";
+import { PageHeader } from "./AppShell";
+import { Alert, Badge, Button, EmptyState, Field, Input, ListRows, Modal, Select, SkeletonList, StatCard, Table, Td, Th, Tr, cx } from "./ui";
 
-const fieldStyle = {
-  width: "100%",
-  padding: "9px 11px",
-  border: "1px solid var(--color-line-strong)",
-  borderRadius: 10,
-  fontSize: "0.92rem",
-  background: "var(--color-surface)",
-  boxSizing: "border-box",
-  marginTop: 4,
+const INVOICE_TONES = { unpaid: "danger", partial: "warning", paid: "success" };
+const InvoiceBadge = ({ status }) => <Badge tone={INVOICE_TONES[status]}>{INVOICE_STATUS_LABELS[status]}</Badge>;
+
+// Commission : validation de sa transaction, à titre d'information (elle ne change aucun montant)
+const TxValidationBadge = ({ tx }) => {
+  const label = tx ? validationLabel(tx) : null;
+  return label ? <Badge tone={isValidated(tx) ? "success" : "warning"}>{label}</Badge> : null;
 };
-const labelStyle = { display: "block", fontSize: "0.85rem", fontWeight: 600, color: "var(--color-ink)" };
-const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 };
-const cell = { padding: "8px 10px", borderBottom: "1px solid var(--color-line)", fontSize: "0.86rem", verticalAlign: "top" };
-const head = { ...cell, fontWeight: 700, background: "var(--color-subtle)", textAlign: "left", whiteSpace: "nowrap" };
-const num = { textAlign: "right", whiteSpace: "nowrap" };
-
-const STATUS_COLORS = { unpaid: ["var(--color-danger-soft)", "var(--color-danger)"], partial: ["var(--color-warning-soft)", "var(--color-warning)"], paid: ["var(--color-success-soft)", "var(--color-success)"] };
-const InvoiceBadge = ({ status }) => (
-  <span
-    style={{
-      background: STATUS_COLORS[status][0],
-      color: STATUS_COLORS[status][1],
-      borderRadius: 999,
-      padding: "2px 8px",
-      fontSize: "0.78rem",
-      whiteSpace: "nowrap",
-    }}
-  >
-    {INVOICE_STATUS_LABELS[status]}
-  </span>
-);
 
 const safeFileName = (name) =>
   String(name || "facture")
@@ -66,26 +45,35 @@ const safeFileName = (name) =>
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/heic"];
 
+const signedAmount = (amount, formatCurrency) =>
+  amount === null ? "" : `${amount > 0 ? "+" : "−"} ${formatCurrency(Math.abs(amount))}`;
+const amountColor = (amount) => (amount > 0 ? "text-success" : amount < 0 ? "text-danger" : "");
+
 // Fenêtre de saisie générique (salaire, paiement, facture)
-function EntryModal({ title, children, error, busy, onCancel, onSubmit, submitLabel }) {
+function EntryModal({ id, title, children, error, busy, onCancel, onSubmit, submitLabel }) {
   return (
-    <div className="admin-modal-backdrop" onClick={onCancel}>
-      <div className="admin-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
-        <h2>{title}</h2>
-        <form onSubmit={onSubmit}>
-          {children}
-          {error && <p className="error-text" style={{ marginTop: 10 }}>{error}</p>}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-            <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>
-              Annuler
-            </button>
-            <button type="submit" className="btn-primary" disabled={busy}>
-              {busy ? "Enregistrement…" : submitLabel}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <Modal
+      open
+      size="md"
+      busy={busy}
+      title={title}
+      onClose={onCancel}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>
+            Annuler
+          </Button>
+          <Button type="submit" form={id} loading={busy}>
+            {submitLabel}
+          </Button>
+        </>
+      }
+    >
+      <form id={id} onSubmit={onSubmit} className="space-y-4" noValidate>
+        {children}
+        {error && <Alert>{error}</Alert>}
+      </form>
+    </Modal>
   );
 }
 
@@ -121,33 +109,28 @@ function SalaryForm({ userId, formatCurrency, onCancel, onDone }) {
   };
 
   return (
-    <EntryModal title="Ajouter un salaire" error={error} busy={busy} onCancel={onCancel} onSubmit={submit} submitLabel="Enregistrer">
-      <div style={grid}>
-        <label style={labelStyle}>
-          Mois
-          <input type="month" style={fieldStyle} value={form.month} onChange={set("month")} />
-        </label>
-        <label style={labelStyle}>
-          Salaire brut total (€)
-          <input style={fieldStyle} inputMode="decimal" value={form.amount} onChange={set("amount")} />
-        </label>
-        <label style={labelStyle}>
-          dont fixe (€)
-          <input style={fieldStyle} inputMode="decimal" placeholder="0" value={form.fixed} onChange={set("fixed")} />
-        </label>
-        <label style={labelStyle}>
-          dont prime (€)
-          <input style={fieldStyle} inputMode="decimal" placeholder="0" value={form.bonus} onChange={set("bonus")} />
-        </label>
+    <EntryModal id="salary-form" title="Ajouter un salaire" error={error} busy={busy} onCancel={onCancel} onSubmit={submit} submitLabel="Enregistrer">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Mois">
+          <Input type="month" value={form.month} onChange={set("month")} />
+        </Field>
+        <Field label="Salaire brut total (€)">
+          <Input inputMode="decimal" value={form.amount} onChange={set("amount")} />
+        </Field>
+        <Field label="dont fixe (€)">
+          <Input inputMode="decimal" placeholder="0" value={form.fixed} onChange={set("fixed")} />
+        </Field>
+        <Field label="dont prime (€)">
+          <Input inputMode="decimal" placeholder="0" value={form.bonus} onChange={set("bonus")} />
+        </Field>
       </div>
-      <p style={{ margin: "12px 0 0", fontSize: "0.9rem" }}>
-        Part imputée sur le solde : <strong>{formatCurrency(Math.max(0, imputed))}</strong>
-        <span style={{ color: "var(--color-ink-muted)", fontSize: "0.8rem" }}> (le fixe et les primes ne diminuent pas le solde)</span>
+      <p className="text-sm text-ink-soft">
+        Part imputée sur le solde : <strong className="tabular text-ink">{formatCurrency(Math.max(0, imputed))}</strong>
+        <span className="text-ink-muted"> (le fixe et les primes ne diminuent pas le solde)</span>
       </p>
-      <label style={{ ...labelStyle, marginTop: 10 }}>
-        Note
-        <input style={fieldStyle} value={form.note} onChange={set("note")} />
-      </label>
+      <Field label="Note">
+        <Input value={form.note} onChange={set("note")} />
+      </Field>
     </EntryModal>
   );
 }
@@ -190,33 +173,28 @@ function PaymentForm({ userId, invoices, payments, formatCurrency, formatDate, o
   };
 
   return (
-    <EntryModal title="Enregistrer un paiement" error={error} busy={busy} onCancel={onCancel} onSubmit={submit} submitLabel="Enregistrer">
-      <div style={grid}>
-        <label style={labelStyle}>
-          Date
-          <input type="date" style={fieldStyle} value={form.paid_at} onChange={set("paid_at")} />
-        </label>
-        <label style={labelStyle}>
-          Montant viré (€)
-          <input style={fieldStyle} inputMode="decimal" value={form.amount} onChange={set("amount")} />
-        </label>
+    <EntryModal id="payment-form" title="Enregistrer un paiement" error={error} busy={busy} onCancel={onCancel} onSubmit={submit} submitLabel="Enregistrer">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Date">
+          <Input type="date" value={form.paid_at} onChange={set("paid_at")} />
+        </Field>
+        <Field label="Montant viré (€)">
+          <Input inputMode="decimal" value={form.amount} onChange={set("amount")} />
+        </Field>
       </div>
-      <label style={{ ...labelStyle, marginTop: 10 }}>
-        Facture concernée (optionnel)
-        <select style={fieldStyle} value={form.invoice_id} onChange={pickInvoice}>
+      <Field label="Facture concernée (facultatif)">
+        <Select value={form.invoice_id} onChange={pickInvoice}>
           <option value="">— Aucune —</option>
           {invoices.map((i) => (
             <option key={i.id} value={i.id}>
-              N° {i.number} du {formatDate(i.issued_at)} · {formatCurrency(i.amount_ttc)} ·{" "}
-              {INVOICE_STATUS_LABELS[invoiceStatus(i, payments)]}
+              N° {i.number} du {formatDate(i.issued_at)} · {formatCurrency(i.amount_ttc)} · {INVOICE_STATUS_LABELS[invoiceStatus(i, payments)]}
             </option>
           ))}
-        </select>
-      </label>
-      <label style={{ ...labelStyle, marginTop: 10 }}>
-        Note
-        <input style={fieldStyle} value={form.note} onChange={set("note")} />
-      </label>
+        </Select>
+      </Field>
+      <Field label="Note">
+        <Input value={form.note} onChange={set("note")} />
+      </Field>
     </EntryModal>
   );
 }
@@ -270,52 +248,36 @@ function InvoiceForm({ userId, settings, formatCurrency, onCancel, onDone }) {
   };
 
   return (
-    <EntryModal title="Déposer une facture" error={error} busy={busy} onCancel={onCancel} onSubmit={submit} submitLabel="Déposer">
-      <div style={grid}>
-        <label style={labelStyle}>
-          N° de facture
-          <input style={fieldStyle} value={form.number} onChange={set("number")} />
-        </label>
-        <label style={labelStyle}>
-          Date
-          <input type="date" style={fieldStyle} value={form.issued_at} onChange={set("issued_at")} />
-        </label>
-        <label style={labelStyle}>
-          Montant HT (€)
-          <input style={fieldStyle} inputMode="decimal" value={form.amount_ht} onChange={set("amount_ht")} />
-        </label>
-        <label style={labelStyle}>
-          TVA (%)
-          <input style={fieldStyle} inputMode="decimal" value={form.vat_rate} onChange={set("vat_rate")} />
-        </label>
+    <EntryModal id="invoice-form" title="Déposer une facture" error={error} busy={busy} onCancel={onCancel} onSubmit={submit} submitLabel="Déposer">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="N° de facture">
+          <Input value={form.number} onChange={set("number")} />
+        </Field>
+        <Field label="Date">
+          <Input type="date" value={form.issued_at} onChange={set("issued_at")} />
+        </Field>
+        <Field label="Montant HT (€)">
+          <Input inputMode="decimal" value={form.amount_ht} onChange={set("amount_ht")} />
+        </Field>
+        <Field label="TVA (%)">
+          <Input inputMode="decimal" value={form.vat_rate} onChange={set("vat_rate")} />
+        </Field>
       </div>
-      <p style={{ margin: "10px 0 0", fontSize: "0.9rem" }}>
-        Montant TTC : <strong>{formatCurrency(round2((ht || 0) * (1 + vat / 100)))}</strong>
+      <p className="text-sm text-ink-soft">
+        Montant TTC : <strong className="tabular text-ink">{formatCurrency(round2((ht || 0) * (1 + vat / 100)))}</strong>
       </p>
-      <label style={{ ...labelStyle, marginTop: 10 }}>
-        Fichier (PDF ou image, 10 Mo max.)
-        <input
+      <Field label="Fichier" hint="PDF ou image, 10 Mo maximum.">
+        <Input
           type="file"
           accept="application/pdf,image/*"
-          style={{ ...fieldStyle, padding: 6 }}
+          className="file:mr-3 file:rounded-lg file:border-0 file:bg-canvas file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-ink"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
         />
-      </label>
-      <label style={{ ...labelStyle, marginTop: 10 }}>
-        Note
-        <input style={fieldStyle} value={form.note} onChange={set("note")} />
-      </label>
+      </Field>
+      <Field label="Note">
+        <Input value={form.note} onChange={set("note")} />
+      </Field>
     </EntryModal>
-  );
-}
-
-function StatCard({ title, value, sub }) {
-  return (
-    <div className="conversion-card" style={{ marginTop: 0 }}>
-      <div className="conversion-card-title">{title}</div>
-      <div className="conversion-card-value">{value}</div>
-      {sub && <div className="conversion-card-sub">{sub}</div>}
-    </div>
   );
 }
 
@@ -347,6 +309,7 @@ function UserDetail({
     if (!t) return "Transaction";
     return [t.property?.address, t.property?.city].filter(Boolean).join(", ") || "Transaction";
   };
+  const txOf = (id) => (id ? (transactions || []).find((x) => x.id === id) || null : null);
   const invoiceLabel = (id) => {
     const i = invoices.find((x) => x.id === id);
     return i ? `Facture n° ${i.number}` : "Facture";
@@ -381,50 +344,38 @@ function UserDetail({
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-        <div>
-          {onBack && (
-            <button type="button" className="link-button" onClick={onBack}>
-              ← Tous les commerciaux
-            </button>
-          )}
-          <h2 className="dash-page-title" style={{ margin: "4px 0 0" }}>
-            Rémunération{label ? ` · ${label}` : ""}
-          </h2>
-          <div style={{ fontSize: "0.85rem", color: "var(--color-ink-muted)" }}>
+      <PageHeader
+        back={onBack ? { onClick: onBack, label: "Tous les commerciaux" } : null}
+        title={`Rémunération${label ? ` · ${label}` : ""}`}
+        subtitle={
+          <>
             {type ? COMPENSATION_TYPES[type] : "Type de rémunération non renseigné"}
             {type && ` · entrée ${settings.rate_entree ?? "—"} % · sortie ${settings.rate_sortie ?? "—"} %`}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {canWrite && type === "salarie" && (
-            <button type="button" className="btn-primary" onClick={() => setForm("salary")}>
-              Ajouter un salaire
-            </button>
-          )}
-          {canWrite && agent && (
-            <button type="button" className="btn-primary" onClick={() => setForm("payment")}>
-              Enregistrer un paiement
-            </button>
-          )}
-          {canUploadInvoice && agent && (
-            <button type="button" className={canWrite ? "btn-outline" : "btn-primary"} onClick={() => setForm("invoice")}>
-              Déposer une facture
-            </button>
-          )}
-          {canWrite && (
-            <button type="button" className="btn-outline" onClick={onEditSettings}>
-              Réglages et solde d'ouverture
-            </button>
-          )}
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            {canWrite && type === "salarie" && <Button onClick={() => setForm("salary")}>Ajouter un salaire</Button>}
+            {canWrite && agent && <Button onClick={() => setForm("payment")}>Enregistrer un paiement</Button>}
+            {canUploadInvoice && agent && (
+              <Button variant={canWrite ? "secondary" : "primary"} onClick={() => setForm("invoice")}>
+                Déposer une facture
+              </Button>
+            )}
+            {canWrite && (
+              <Button variant="secondary" onClick={onEditSettings}>
+                Réglages et solde d'ouverture
+              </Button>
+            )}
+          </>
+        }
+      />
 
-      {error && <p className="error-text">{error}</p>}
+      {error && <Alert className="mb-4">{error}</Alert>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
-          title="Solde dû par l'agence"
+          label="Solde dû par l'agence"
           value={formatCurrency(balance)}
           sub={
             settings?.opening_balance_date
@@ -433,7 +384,7 @@ function UserDetail({
           }
         />
         <StatCard
-          title={projectionLabel(type)}
+          label={projectionLabel(type)}
           value={formatCurrency(projection.amount_due)}
           sub={
             projection.incomplete
@@ -442,100 +393,104 @@ function UserDetail({
           }
         />
         <StatCard
-          title={`Acquis en ${year}`}
+          label={`Acquis en ${year}`}
           value={formatCurrency(earnedInYear(entries, year))}
           sub={type === "salarie" ? "Salaire variable brut sur les ventes actées." : `Commissions dues sur les ventes actées${type === "agent_tva" ? " (TTC)" : ""}.`}
         />
       </div>
 
-      <h3 style={{ margin: "22px 0 8px" }}>Relevé</h3>
-      <div className="comp-table-wrap" style={{ background: "var(--color-surface)", border: "1px solid var(--color-line)", borderRadius: 16 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={head}>Date</th>
-              <th style={head}>Libellé</th>
-              <th style={head}>Transaction / facture</th>
-              <th style={{ ...head, ...num }}>+ / −</th>
-              <th style={{ ...head, ...num }}>Solde</th>
-              {canWrite && <th style={head} />}
-            </tr>
-          </thead>
-          <tbody>
-            {statement.map((r) => (
-              <tr key={r.key}>
-                <td style={cell}>{r.date ? formatDate(r.date) : "—"}</td>
-                <td style={cell}>{r.label}</td>
-                <td style={cell}>{r.link || "—"}</td>
-                <td style={{ ...cell, ...num, color: r.amount > 0 ? "var(--color-success)" : r.amount < 0 ? "var(--color-danger)" : undefined }}>
-                  {r.amount === null ? "" : `${r.amount > 0 ? "+" : "−"} ${formatCurrency(Math.abs(r.amount))}`}
-                </td>
-                <td style={{ ...cell, ...num, fontWeight: 600 }}>{formatCurrency(r.balance)}</td>
-                {canWrite && (
-                  <td style={cell}>
-                    {r.payment && (
-                      <button type="button" className="btn-outline-small" onClick={() => deletePayment(r.payment)}>
-                        Supprimer
-                      </button>
-                    )}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="comp-cards">
+      <h2 className="mt-10 mb-3 text-lg font-semibold text-ink">Relevé</h2>
+      <Table className="hidden lg:block">
+        <thead>
+          <tr>
+            <Th>Date</Th>
+            <Th>Libellé</Th>
+            <Th>Transaction / facture</Th>
+            <Th align="right">+ / −</Th>
+            <Th align="right">Solde</Th>
+            {canWrite && <Th />}
+          </tr>
+        </thead>
+        <tbody>
+          {statement.map((r) => (
+            <Tr key={r.key}>
+              <Td className="whitespace-nowrap">{r.date ? formatDate(r.date) : "—"}</Td>
+              <Td>{r.label}</Td>
+              <Td>
+                <span className="inline-flex flex-wrap items-center gap-2">
+                  {r.link || "—"}
+                  <TxValidationBadge tx={txOf(r.transactionId)} />
+                </span>
+              </Td>
+              <Td align="right" className={cx("whitespace-nowrap", amountColor(r.amount))}>
+                {signedAmount(r.amount, formatCurrency)}
+              </Td>
+              <Td align="right" className="font-semibold whitespace-nowrap">
+                {formatCurrency(r.balance)}
+              </Td>
+              {canWrite && (
+                <Td align="right">
+                  {r.payment && (
+                    <Button variant="quiet" size="xs" onClick={() => deletePayment(r.payment)}>
+                      Supprimer
+                    </Button>
+                  )}
+                </Td>
+              )}
+            </Tr>
+          ))}
+        </tbody>
+      </Table>
+      <ListRows className="lg:hidden">
         {statement.map((r) => (
-          <div key={r.key} className="comp-card">
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <strong>{r.label}</strong>
-              <span style={{ whiteSpace: "nowrap", color: r.amount > 0 ? "var(--color-success)" : r.amount < 0 ? "var(--color-danger)" : undefined }}>
-                {r.amount === null ? "" : `${r.amount > 0 ? "+" : "−"} ${formatCurrency(Math.abs(r.amount))}`}
-              </span>
+          <li key={r.key} className="space-y-1 px-4 py-3 text-sm">
+            <div className="flex justify-between gap-3">
+              <strong className="text-ink">{r.label}</strong>
+              <span className={cx("tabular whitespace-nowrap", amountColor(r.amount))}>{signedAmount(r.amount, formatCurrency)}</span>
             </div>
-            <div style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}>
-              {r.date ? formatDate(r.date) : "—"}
-              {r.link ? ` · ${r.link}` : ""} · solde {formatCurrency(r.balance)}
+            <div className="flex flex-wrap items-center gap-2 text-ink-muted">
+              <span>
+                {r.date ? formatDate(r.date) : "—"}
+                {r.link ? ` · ${r.link}` : ""} · solde {formatCurrency(r.balance)}
+              </span>
+              <TxValidationBadge tx={txOf(r.transactionId)} />
             </div>
             {canWrite && r.payment && (
-              <button type="button" className="btn-outline-small" style={{ marginTop: 6 }} onClick={() => deletePayment(r.payment)}>
+              <Button variant="quiet" size="xs" onClick={() => deletePayment(r.payment)}>
                 Supprimer
-              </button>
+              </Button>
             )}
-          </div>
+          </li>
         ))}
-      </div>
+      </ListRows>
 
       {agent && (
         <>
-          <h3 style={{ margin: "22px 0 8px" }}>Factures</h3>
+          <h2 className="mt-10 mb-3 text-lg font-semibold text-ink">Factures</h2>
           {invoices.length === 0 ? (
-            <p style={{ color: "var(--color-ink-muted)", fontSize: "0.9rem" }}>Aucune facture déposée.</p>
+            <p className="rounded-card border border-dashed border-line-strong bg-surface px-6 py-5 text-ink-muted">Aucune facture déposée.</p>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <ListRows>
               {invoices.map((i) => {
                 const status = invoiceStatus(i, payments);
                 return (
-                  <div key={i.id} className="comp-card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    <div>
-                      <strong>N° {i.number}</strong> du {formatDate(i.issued_at)} · {formatCurrency(i.amount_ttc)} TTC
-                      {status === "partial" && (
-                        <span style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}> · payé {formatCurrency(invoicePaidAmount(i, payments))}</span>
-                      )}
+                  <li key={i.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+                    <div className="tabular min-w-0 text-sm">
+                      <strong className="text-ink">N° {i.number}</strong> du {formatDate(i.issued_at)} · {formatCurrency(i.amount_ttc)} TTC
+                      {status === "partial" && <span className="text-ink-muted"> · payé {formatCurrency(invoicePaidAmount(i, payments))}</span>}
                     </div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <div className="flex items-center gap-3">
                       <InvoiceBadge status={status} />
                       {i.file_path && (
-                        <button type="button" className="btn-outline-small" onClick={() => download(i)}>
+                        <Button variant="secondary" size="xs" onClick={() => download(i)}>
                           Télécharger
-                        </button>
+                        </Button>
                       )}
                     </div>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
+            </ListRows>
           )}
         </>
       )}
@@ -643,24 +598,19 @@ export default function CompensationPage({
     />
   );
 
-  const styles = (
-    <style>{`
-      .comp-cards { display: none; }
-      .comp-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 10px 12px; font-size: 0.88rem; }
-      @media (max-width: 1023px) {
-        .comp-table-wrap { display: none; }
-        .comp-cards { display: flex; flex-direction: column; gap: 8px; }
-      }
-    `}</style>
-  );
-
-  if (loading && data.settings.length === 0) return <p>Chargement…</p>;
+  if (loading && data.settings.length === 0) {
+    return (
+      <>
+        <PageHeader title="Rémunération" />
+        <SkeletonList rows={4} label="Chargement de la rémunération" />
+      </>
+    );
+  }
 
   if (detailId) {
     return (
       <>
-        {styles}
-        {loadError && <p className="error-text">{loadError}</p>}
+        {loadError && <Alert className="mb-4">{loadError}</Alert>}
         <UserDetail
           userId={detailId}
           label={seesOthers ? labelOf(detailId) : ""}
@@ -675,9 +625,7 @@ export default function CompensationPage({
           formatCurrency={formatCurrency}
           formatDate={formatDate}
           onBack={seesOthers ? () => setSelectedId(null) : null}
-          onEditSettings={() =>
-            setSettingsTarget({ userId: detailId, label: labelOf(detailId), settings: settingsOf(detailId) })
-          }
+          onEditSettings={() => setSettingsTarget({ userId: detailId, label: labelOf(detailId), settings: settingsOf(detailId) })}
           onChanged={load}
         />
         {settingsModal}
@@ -685,71 +633,75 @@ export default function CompensationPage({
     );
   }
 
+  const typeLabel = (r) => (r.settings.compensation_type ? COMPENSATION_TYPES[r.settings.compensation_type] : "À renseigner");
+
   return (
     <>
-      {styles}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-        <h2 className="dash-page-title" style={{ margin: 0 }}>Rémunération</h2>
-        <button type="button" className="btn-outline" onClick={load} disabled={loading}>
-          Actualiser
-        </button>
-      </div>
-      {loadError && <p className="error-text">{loadError}</p>}
-      {!isAdmin && <p style={{ color: "var(--color-ink-muted)", fontSize: "0.88rem" }}>Lecture seule : votre équipe.</p>}
+      <PageHeader
+        title="Rémunération"
+        subtitle={isAdmin ? "Soldes, projections et relevés de chaque commercial." : "Lecture seule : votre équipe."}
+        actions={
+          <Button variant="secondary" onClick={load} disabled={loading}>
+            Actualiser
+          </Button>
+        }
+      />
+      {loadError && <Alert className="mb-4">{loadError}</Alert>}
 
-      <div className="comp-table-wrap" style={{ background: "var(--color-surface)", border: "1px solid var(--color-line)", borderRadius: 16 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={head}>Commercial</th>
-              <th style={head}>Type</th>
-              <th style={{ ...head, ...num }}>Solde dû</th>
-              <th style={{ ...head, ...num }}>À venir (projection)</th>
-              <th style={{ ...head, ...num }}>Acquis {year}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} onClick={() => setSelectedId(r.id)} style={{ cursor: "pointer" }}>
-                <td style={cell}>
-                  <button type="button" className="link-button" onClick={() => setSelectedId(r.id)}>
-                    {r.label}
-                  </button>
-                </td>
-                <td style={cell}>{r.settings.compensation_type ? COMPENSATION_TYPES[r.settings.compensation_type] : "À renseigner"}</td>
-                <td style={{ ...cell, ...num, fontWeight: 600 }}>{formatCurrency(r.balance)}</td>
-                <td style={{ ...cell, ...num }}>
-                  {formatCurrency(r.projection.amount_due)}
-                  {r.projection.incomplete ? " *" : ""}
-                </td>
-                <td style={{ ...cell, ...num }}>{formatCurrency(r.earned)}</td>
+      {rows.length === 0 ? (
+        <EmptyState title="Aucun commercial" text="Les réglages de rémunération se font dans Paramètres → Utilisateurs." />
+      ) : (
+        <>
+          <Table className="hidden lg:block">
+            <thead>
+              <tr>
+                <Th>Commercial</Th>
+                <Th>Type</Th>
+                <Th align="right">Solde dû</Th>
+                <Th align="right">À venir (projection)</Th>
+                <Th align="right">Acquis {year}</Th>
               </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <Tr key={r.id} onClick={() => setSelectedId(r.id)}>
+                  <Td className="font-semibold">{r.label}</Td>
+                  <Td>{typeLabel(r)}</Td>
+                  <Td align="right" className="font-semibold">
+                    {formatCurrency(r.balance)}
+                  </Td>
+                  <Td align="right">
+                    {formatCurrency(r.projection.amount_due)}
+                    {r.projection.incomplete ? " *" : ""}
+                  </Td>
+                  <Td align="right">{formatCurrency(r.earned)}</Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+          <ListRows className="lg:hidden">
+            {rows.map((r) => (
+              <li key={r.id}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(r.id)}
+                  className="block w-full space-y-1 px-4 py-4 text-left text-sm transition hover:bg-canvas/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+                >
+                  <span className="flex justify-between gap-3">
+                    <strong className="text-ink">{r.label}</strong>
+                    <strong className="tabular text-ink">{formatCurrency(r.balance)}</strong>
+                  </span>
+                  <span className="block text-ink-muted">
+                    {typeLabel(r)} · à venir {formatCurrency(r.projection.amount_due)} · acquis {year} {formatCurrency(r.earned)}
+                  </span>
+                </button>
+              </li>
             ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="comp-cards">
-        {rows.map((r) => (
-          <button
-            key={r.id}
-            type="button"
-            className="comp-card"
-            style={{ textAlign: "left", cursor: "pointer" }}
-            onClick={() => setSelectedId(r.id)}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <strong>{r.label}</strong>
-              <strong>{formatCurrency(r.balance)}</strong>
-            </div>
-            <div style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}>
-              {r.settings.compensation_type ? COMPENSATION_TYPES[r.settings.compensation_type] : "Type à renseigner"} · à venir{" "}
-              {formatCurrency(r.projection.amount_due)} · acquis {year} {formatCurrency(r.earned)}
-            </div>
-          </button>
-        ))}
-      </div>
-      {rows.some((r) => r.projection.incomplete) && (
-        <p style={{ fontSize: "0.8rem", color: "var(--color-ink-muted)" }}>* Projection incomplète : type ou taux non renseigné.</p>
+          </ListRows>
+          {rows.some((r) => r.projection.incomplete) && (
+            <p className="mt-2 text-sm text-ink-muted">* Projection incomplète : type ou taux non renseigné.</p>
+          )}
+        </>
       )}
       {settingsModal}
     </>
