@@ -21,7 +21,7 @@ const BUTTON_VARIANTS = {
 const BUTTON_SIZES = {
   md: "min-h-11 px-5 text-base",
   sm: "min-h-11 px-4 text-sm",
-  xs: "min-h-9 px-3 text-sm",
+  xs: "min-h-11 px-3 text-sm sm:min-h-9", // 44 px au doigt sur téléphone
   icon: "size-11",
 };
 

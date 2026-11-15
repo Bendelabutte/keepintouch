@@ -15,6 +15,9 @@ export const CREATE_TYPES = Object.freeze({
   "apres-vente": "after",
 });
 
+// Saisie rapide : type de fiche déterminé par l'IA (createCategory « auto »).
+export const QUICK_CREATE_PATH = "/clients/nouveau/rapide";
+
 export const createPathFor = (category) => {
   const slug = Object.keys(CREATE_TYPES).find((k) => CREATE_TYPES[k] === category);
   return `/clients/nouveau/${slug || "vendeur"}`;
@@ -36,6 +39,7 @@ export const parseRoute = (pathname) => {
 
   if (head === "clients") {
     if (second === "nouveau") {
+      if (third === "rapide") return { page: "clients", view: "create", createCategory: "auto" };
       const createCategory = CREATE_TYPES[third];
       return createCategory ? { page: "clients", view: "create", createCategory } : { page: null };
     }

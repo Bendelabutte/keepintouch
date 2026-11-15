@@ -61,7 +61,7 @@ export default function Modal({ open, title, description, size = "md", busy = fa
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 sm:items-center sm:p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose?.();
       }}
@@ -73,11 +73,12 @@ export default function Modal({ open, title, description, size = "md", busy = fa
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cx(
-          "flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-card border border-line bg-surface text-ink shadow-xl outline-none",
+          // Téléphone : panneau en bas d'écran (actions à portée du pouce, zone sûre de l'iPhone incluse)
+          "flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-card border border-line bg-surface pb-[env(safe-area-inset-bottom)] text-ink shadow-xl outline-none sm:max-h-[90dvh] sm:rounded-card sm:pb-0",
           widths[size] || widths.md
         )}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
+        <div className="flex items-start justify-between gap-4 border-b border-line px-4 py-4 sm:px-6">
           <div className="min-w-0">
             <h2 id={titleId} className="font-display text-xl font-semibold">
               {title}
@@ -98,8 +99,8 @@ export default function Modal({ open, title, description, size = "md", busy = fa
             <span aria-hidden="true">×</span>
           </button>
         </div>
-        <div className="overflow-y-auto px-6 py-5">{children}</div>
-        {footer && <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line px-6 py-4">{footer}</div>}
+        <div className="overflow-y-auto px-4 py-5 sm:px-6">{children}</div>
+        {footer && <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line px-4 py-3 sm:px-6 sm:py-4">{footer}</div>}
       </div>
     </div>,
     document.body

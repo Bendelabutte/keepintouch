@@ -6,6 +6,18 @@ import { Button, Modal } from "./ui";
 // Version 4.0 : textes provisoires, à réécrire en fin de projet.
 const NOTES = [
   {
+    title: "Saisie rapide",
+    text: "« Ajouter » → « Saisie rapide » : décrivez le client en quelques phrases (nom, téléphone, budget, secteurs, contraintes…) et touchez « Remplir la fiche ». Le type de fiche et les champs se remplissent ; les champs remplis sont signalés « IA », ceux à vérifier en orange. Rien n’est enregistré tant que vous n’avez pas cliqué sur « Créer la fiche ». Également disponible sur chaque page de création.",
+  },
+  {
+    title: "Dictée au micro du clavier",
+    text: "en rendez-vous, touchez le micro du clavier de votre téléphone dans la zone « Coller une description » et dictez : pas besoin de taper. Si vous corrigez un champ puis relancez « Remplir la fiche », votre correction est conservée.",
+  },
+  {
+    title: "Keepintouch sur téléphone",
+    text: "écrans adaptés à l’iPhone et à Android : boutons « Saisie rapide » et « Créer la fiche » en bas d’écran, sous le pouce, claviers adaptés (téléphone, email, chiffres), sans zoom intempestif. Pour l’avoir comme une application : Safari → Partager → « Sur l’écran d’accueil » ; Chrome → menu ⋮ → « Ajouter à l’écran d’accueil ».",
+  },
+  {
     title: "Transactions modifiables jusqu’à la validation",
     text: "promesse, vente actée ou location : vous corrigez montants, déductions et répartition tant que l’administrateur n’a pas validé. Le badge « À valider » ou « Validée » l’indique sur chaque transaction.",
   },

@@ -1,0 +1,21 @@
+{
+  "name": "Keepintouch · Rester en contact",
+  "short_name": "Keepintouch",
+  "description": "Suivi et relances de vos clients vendeurs, acquéreurs et après-vente.",
+  "lang": "fr",
+  "id": "/",
+  "start_url": "/clients",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f4f6",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Saisie rapide", "url": "/clients/nouveau/rapide", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

@@ -3,8 +3,8 @@
 import React from "react";
 import { PageHeader } from "./AppShell";
 import { STATUS_FILTERS } from "../lib/clientStatus";
-import { createPathFor } from "../lib/routes";
-import { Alert, Dropdown, EmptyState, Icon, Input, Select, SkeletonList, Tabs, buttonClasses } from "./ui";
+import { QUICK_CREATE_PATH, createPathFor } from "../lib/routes";
+import { Alert, ButtonLink, Dropdown, EmptyState, Icon, Input, Select, SkeletonList, Tabs, buttonClasses } from "./ui";
 
 const CATEGORY_TABS = [
   { key: "vendeur", label: "Vendeurs" },
@@ -22,20 +22,22 @@ const STAGE_TABS = [
 ];
 
 const ADD_MENU = [
+  { key: "quick", label: "Saisie rapide", description: "Collez ou dictez une description", icon: "sparkle", to: QUICK_CREATE_PATH },
   { key: "seller", label: "Vendeur / estimation", description: "Bien à estimer, vendre ou louer", icon: "home", to: createPathFor("seller") },
   { key: "buyer", label: "Acquéreur", description: "Projet d’achat", icon: "search", to: createPathFor("buyer") },
   { key: "after", label: "Après-vente", description: "Suivi après l’achat", icon: "user", to: createPathFor("after") },
 ];
 
-export function AddClientButton({ align = "right" }) {
+export function AddClientButton({ align = "right", placement = "bottom", variant = "primary", label = "Ajouter" }) {
   return (
     <Dropdown
       align={align}
-      triggerClassName={buttonClasses({ variant: "primary" })}
+      placement={placement}
+      triggerClassName={buttonClasses({ variant })}
       trigger={
         <>
           <Icon name="plus" />
-          Ajouter
+          {label}
           <Icon name="chevronDown" size={16} />
         </>
       }
@@ -67,7 +69,15 @@ export default function ClientsListView({
 
   return (
     <>
-      <PageHeader title="Clients" subtitle="Vos fiches à relancer et leur avancement." actions={<AddClientButton />} />
+      <PageHeader
+        title="Clients"
+        subtitle="Vos fiches à relancer et leur avancement."
+        actions={
+          <div className="hidden sm:block">
+            <AddClientButton />
+          </div>
+        }
+      />
 
       <div className="mb-6 space-y-3">
         <Tabs label="Type de fiche" items={CATEGORY_TABS} value={currentTab} onChange={setCurrentTab} />
@@ -138,6 +148,17 @@ export default function ClientsListView({
           ))}
         </div>
       )}
+
+      {/* Téléphone : actions principales en bas d'écran, à portée du pouce (zone sûre de l'iPhone incluse) */}
+      <div aria-hidden="true" className="h-[calc(4.25rem+env(safe-area-inset-bottom))] sm:hidden" />
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface pt-3 pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(0.75rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] shadow-bar sm:hidden">
+        <div className="flex items-center gap-3">
+          <ButtonLink to={QUICK_CREATE_PATH} icon="sparkle" className="flex-1">
+            Saisie rapide
+          </ButtonLink>
+          <AddClientButton placement="top" variant="secondary" label="Fiche" />
+        </div>
+      </div>
     </>
   );
 }

@@ -174,6 +174,7 @@ export default function ClientDetailCard({
                 { label: "Date de l’estimation", value: c.estimation_date ? formatDate(c.estimation_date) : null },
                 { label: "Valeur estimée", value: money(c.estimation_value) },
                 { label: "Adresse du bien", value: c.property_address },
+                { label: "Pièces", value: c.rooms },
                 { label: "Type", value: c.seller_kind },
                 { label: "Origine", value: c.contact_origin },
                 { label: "Horizon", value: c.project_horizon },
@@ -353,7 +354,7 @@ export default function ClientDetailCard({
           ) : (
             <>
               {!isSold && (
-                <Button size="sm" icon="check" onClick={() => handleValidateRelance(c)}>
+                <Button size="sm" icon="check" className="max-sm:w-full" onClick={() => handleValidateRelance(c)}>
                   Valider la relance
                 </Button>
               )}

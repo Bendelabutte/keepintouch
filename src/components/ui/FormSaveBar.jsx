@@ -11,14 +11,15 @@ export default function FormSaveBar({ formId, label = "Enregistrer", dirty, load
   return (
     <>
       <div aria-hidden="true" className="h-[calc(4.25rem+1px+env(safe-area-inset-bottom))]" />
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] shadow-bar">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] shadow-bar">
         <div className="mx-auto flex h-17 max-w-page items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-          <p role="status" className={cx("min-w-0 truncate text-sm font-medium", dirty ? "text-warning" : "text-ink-muted")}>
+          <p role="status" className={cx("min-w-0 truncate text-sm font-medium max-sm:sr-only", dirty ? "text-warning" : "text-ink-muted")}>
             {dirty ? "Modifications non enregistrées" : idleLabel}
           </p>
-          <div className="flex shrink-0 items-center gap-3">
+          {/* Téléphone : boutons sur toute la largeur, le principal à droite sous le pouce */}
+          <div className="flex shrink-0 items-center gap-3 max-sm:flex-1 max-sm:justify-end">
             {secondary}
-            <Button type="submit" form={formId} loading={loading} disabled={disabled}>
+            <Button type="submit" form={formId} loading={loading} disabled={disabled} className="max-sm:flex-1">
               {label}
             </Button>
           </div>

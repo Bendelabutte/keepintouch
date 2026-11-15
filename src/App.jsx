@@ -830,7 +830,8 @@ useEffect(() => {
     if (route.view !== "create") return;
     setEditingClientId(null);
     setClientFormError("");
-    setNewClient(blankClient(route.createCategory));
+    // Saisie rapide (« auto ») : vendeur par défaut, le type est ensuite déterminé par l'IA
+    setNewClient(blankClient(route.createCategory === "auto" ? "seller" : route.createCategory));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.view, route.createCategory]);
 
@@ -942,7 +943,7 @@ useEffect(() => {
       client_birthday: newClient.category === "after" ? newClient.client_birthday || null : null,
       context: newClient.category !== "seller" ? newClient.context || null : null,
       estimation_value: newClient.category === "seller" ? toAmount(newClient.estimation_value) : null,
-      rooms: newClient.category === "buyer" ? toAmount(newClient.rooms) : null,
+      rooms: ["buyer", "seller"].includes(newClient.category) ? toAmount(newClient.rooms) : null,
       next_due_date: chosenNext,
             next_due_source: (() => {
         if (!newClient.manual_next_due_date) return "auto";
@@ -2812,6 +2813,10 @@ const handleCloseReleaseNotesTemporary = () => {
           </>
         ) : route.view === "create" ? (
           <ClientCreatePage
+            key={route.createCategory}
+            quick={route.createCategory === "auto"}
+            setValues={setNewClient}
+            defaultsFor={blankClient}
             values={newClient}
             onChange={handleNewClientChange}
             onSubmit={handleSaveClient}

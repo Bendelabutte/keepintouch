@@ -14,6 +14,7 @@ describe("adresses de l'application", () => {
     expect(parseRoute("/clients/nouveau/vendeur")).toEqual({ page: "clients", view: "create", createCategory: "seller" });
     expect(parseRoute("/clients/nouveau/acquereur").createCategory).toBe("buyer");
     expect(parseRoute("/clients/nouveau/apres-vente").createCategory).toBe("after");
+    expect(parseRoute("/clients/nouveau/rapide")).toEqual({ page: "clients", view: "create", createCategory: "auto" });
     expect(parseRoute("/transactions/t1").transactionId).toBe("t1");
   });
 

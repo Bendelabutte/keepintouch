@@ -17,7 +17,7 @@ export default function Tabs({ items, value, onChange, label, className = "" }) 
             aria-selected={active}
             onClick={() => onChange(item.key)}
             className={cx(
-              "inline-flex min-h-10 items-center gap-2 whitespace-nowrap rounded-control border px-3.5 text-sm font-semibold transition",
+              "inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-control border px-3.5 text-sm font-semibold transition sm:min-h-10",
               focusRing,
               active
                 ? "border-primary bg-primary text-white shadow-card"

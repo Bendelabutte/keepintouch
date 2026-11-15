@@ -71,6 +71,18 @@
     color: var(--color-ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    /* Téléphone : jamais de défilement horizontal de la page (clip ne gêne pas position: sticky) */
+    overflow-x: clip;
+  }
+
+  /* Téléphone : pas de délai ni de zoom au double appui sur les contrôles */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  label {
+    touch-action: manipulation;
   }
 
   table,

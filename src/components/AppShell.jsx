@@ -1,8 +1,8 @@
 // src/components/AppShell.jsx
 // Structure commune à toutes les pages (même structure que Bien EDL) : barre de navigation
 // supérieure blanche pleine largeur, contenu centré. Les onglets ne dépendent jamais de la page.
-import React from "react";
-import { NavLink } from "react-router";
+import React, { useEffect, useRef } from "react";
+import { NavLink, useLocation } from "react-router";
 import { PAGE_PATHS } from "../lib/routes";
 import { Dropdown, Icon, cx, focusRing } from "./ui";
 
@@ -33,10 +33,17 @@ export function Brand() {
 
 export default function AppShell({ children, version, profile, email, isAdmin, onProfile, onSettings, onNews, onLogout }) {
   const name = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || email;
+  const { pathname } = useLocation();
+  const navRef = useRef(null);
+
+  // Téléphone : les onglets défilent dans leur ligne ; l'onglet actif reste visible
+  useEffect(() => {
+    navRef.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [pathname]);
 
   return (
-    <div className="min-h-dvh bg-canvas">
-      <header className="border-b border-line bg-surface">
+    <div className="min-h-dvh bg-canvas pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
+      <header className="border-b border-line bg-surface pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex max-w-page flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 sm:px-6 lg:px-8">
           <NavLink to={PAGE_PATHS.clients} className={cx("min-w-0 rounded-control", focusRing)}>
             <Brand />
@@ -44,9 +51,12 @@ export default function AppShell({ children, version, profile, email, isAdmin, o
 
           {/* Sur tablette et mobile, les onglets passent sur leur propre ligne sous la marque. */}
           <nav aria-label="Navigation principale" className="order-last w-full lg:order-none lg:w-auto lg:flex-1">
-            <ul className="-mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-1 lg:pb-0">
+            <ul
+              ref={navRef}
+              className="-mx-1 flex snap-x items-center gap-1 overflow-x-auto overscroll-x-contain px-1 pb-1 [scrollbar-width:none] lg:pb-0"
+            >
               {NAV_ITEMS.map((item) => (
-                <li key={item.key} className="shrink-0">
+                <li key={item.key} className="shrink-0 snap-start">
                   <NavLink
                     to={item.to}
                     className={({ isActive }) =>
@@ -95,7 +105,7 @@ export default function AppShell({ children, version, profile, email, isAdmin, o
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-page px-4 py-8 sm:px-6 sm:py-10 lg:px-8">{children}</main>
+      <main className="mx-auto w-full max-w-page px-4 py-6 sm:px-6 sm:py-10 lg:px-8">{children}</main>
       <footer className="mx-auto max-w-page px-4 pb-8 text-center text-xs text-ink-muted sm:px-6 lg:px-8">
         © Benjamin Rondreux — Keepintouch {version} — 2026
       </footer>
@@ -111,7 +121,7 @@ const backClass = cx(
 // En-tête de page (Bien EDL) : lien retour éventuel, grand titre en Fraunces, actions à droite.
 export function PageHeader({ title, subtitle, actions, back }) {
   return (
-    <div className="mb-8">
+    <div className="mb-6 sm:mb-8">
       {back &&
         (back.to ? (
           <NavLink to={back.to} className={backClass}>
