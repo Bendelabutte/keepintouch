@@ -6,14 +6,15 @@ import React, { useEffect, useState } from "react";
 import AddressAutocomplete from "./AddressAutocomplete";
 import { contactError, emailError, formatPhoneInput } from "../lib/contact";
 import { HORIZONS, PROPERTY_KINDS } from "../lib/aiParse";
+import { CIRCUMSTANCES, CIRCUMSTANCE_LABELS, NOT_SPECIFIED } from "../lib/circumstance";
 import { MANDATE_TYPES } from "../lib/stages";
 import { Field, Icon, Input, Select, Textarea, cx } from "./ui";
 
 // Champs rangés sous « Plus d'infos », par type de fiche (ouverts si l'IA les a remplis)
 const MORE_FIELDS = {
-  seller: ["estimation_value", "seller_kind", "project_horizon", "sale_reason", "consultant_feeling"],
-  buyer: ["contact_origin", "acquisition_date", "min_surface", "bedrooms", "project_horizon", "consultant_feeling"],
-  after: ["contact_origin", "context", "consultant_feeling"],
+  seller: ["estimation_value", "seller_kind", "project_horizon", "sale_reason", "contact_circumstance", "consultant_feeling"],
+  buyer: ["contact_origin", "contact_circumstance", "acquisition_date", "min_surface", "bedrooms", "project_horizon", "consultant_feeling"],
+  after: ["contact_origin", "contact_circumstance", "context", "consultant_feeling"],
 };
 
 function Grid({ children }) {
@@ -162,6 +163,25 @@ export default function ClientForm({ values, onChange, mode = "create", submitte
         value={v.contact_origin || ""}
         onChange={set("contact_origin")}
       />
+    </Field>
+  );
+
+  // Tous les types de fiche : reprise dans le message de remerciement
+  const circumstance = (
+    <Field label={label("contact_circumstance", "Circonstance du premier échange")}>
+      <Select
+        name="contact_circumstance"
+        className={ring("contact_circumstance")}
+        value={v.contact_circumstance || ""}
+        onChange={set("contact_circumstance")}
+      >
+        <option value="">{NOT_SPECIFIED}</option>
+        {CIRCUMSTANCES.map((k) => (
+          <option key={k} value={k}>
+            {CIRCUMSTANCE_LABELS[k]}
+          </option>
+        ))}
+      </Select>
     </Field>
   );
 
@@ -407,6 +427,7 @@ export default function ClientForm({ values, onChange, mode = "create", submitte
                   </Full>
                 </>
               )}
+              {circumstance}
               {feeling}
               {manualNext}
             </Grid>

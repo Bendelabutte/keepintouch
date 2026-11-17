@@ -6,6 +6,8 @@ import { hasNoFollowUp, sellerPhaseActions } from "../lib/relance";
 import { closedDate, closedDossierDates, closureReasonLabel } from "../lib/clientStatus";
 import { formatPhone } from "../lib/contact";
 import { MANDATE_TYPES, sellerTimeline, visibleSellerSections } from "../lib/stages";
+import { outreachKindFor, outreachLabel } from "../lib/outreach";
+import { circumstanceDisplay } from "../lib/circumstance";
 import { Badge, Button, Icon, Input, Textarea, cx, focusRing } from "./ui";
 
 const PHASE_ACTION_TITLES = {
@@ -114,9 +116,22 @@ export default function ClientDetailCard({
   promiseDate,
   onAddClosedNote,
   onReopen,
+  onThank,
+  outreachByClient = {},
+  profileLabel,
 }) {
   const { label: nextLabel, delayLabel, diffDays } = getFollowupInfo(c);
-  const comments = (commentsByClient[c.id] || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  // Historique : commentaires et remerciements (client_outreach), du plus récent au plus ancien
+  const comments = [
+    ...(commentsByClient[c.id] || []),
+    ...(outreachByClient[c.id] || []).map((o) => ({
+      id: `outreach-${o.id}`,
+      created_at: o.created_at,
+      body: [outreachLabel(o), profileLabel?.(o.user_id)].filter(Boolean).join(" – "),
+      outreach: o.status === "echec" ? "failed" : "ok",
+    })),
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const canThank = Boolean(onThank && outreachKindFor(c));
   const isSeller = c.category === "seller";
   const isBuyer = c.category === "buyer";
   const isClosed = c.status === "closed";
@@ -177,6 +192,7 @@ export default function ClientDetailCard({
                 { label: "Pièces", value: c.rooms },
                 { label: "Type", value: c.seller_kind },
                 { label: "Origine", value: c.contact_origin },
+                { label: "Premier échange", value: circumstanceDisplay(c) },
                 { label: "Horizon", value: c.project_horizon },
               ]}
             />
@@ -236,6 +252,7 @@ export default function ClientDetailCard({
                       { label: "Type de bien", value: c.project_type },
                       { label: "Pièces", value: c.rooms },
                       { label: "Secteurs", value: c.area },
+                      { label: "Premier échange", value: circumstanceDisplay(c) },
                       { label: "Surface minimum", value: c.min_surface ? `${c.min_surface} m²` : null },
                       { label: "Chambres", value: c.bedrooms },
                       { label: "Enregistrement", value: c.acquisition_date ? formatDate(c.acquisition_date) : null },
@@ -250,6 +267,7 @@ export default function ClientDetailCard({
                       },
                       { label: "Anniversaire", value: c.client_birthday ? formatDate(c.client_birthday) : null },
                       { label: "Origine", value: c.contact_origin },
+                      { label: "Premier échange", value: circumstanceDisplay(c) },
                       { label: "Contexte", value: c.context },
                     ]
               }
@@ -369,6 +387,11 @@ export default function ClientDetailCard({
                   {action.label}
                 </Button>
               ))}
+              {canThank && (
+                <Button size="sm" variant="secondary" icon="mail" onClick={() => onThank(c)}>
+                  Remercier
+                </Button>
+              )}
               <span className="ml-auto flex flex-wrap gap-2">
                 {!isSold && (
                   <Button size="sm" variant="quiet" onClick={() => openEditModal(c)}>
@@ -396,7 +419,13 @@ export default function ClientDetailCard({
           <ol className="relative space-y-3 border-l border-line pl-4">
             {comments.map((n) => (
               <li key={n.id} className="relative text-sm">
-                <span aria-hidden="true" className="absolute top-1.5 -left-[21px] size-2.5 rounded-full bg-line-strong ring-2 ring-surface" />
+                <span
+                  aria-hidden="true"
+                  className={cx(
+                    "absolute top-1.5 -left-[21px] size-2.5 rounded-full ring-2 ring-surface",
+                    n.outreach === "ok" ? "bg-accent" : n.outreach === "failed" ? "bg-danger" : "bg-line-strong"
+                  )}
+                />
                 <span className="tabular text-xs font-semibold text-ink-muted">{formatDate(n.created_at)}</span>
                 <p className="whitespace-pre-line text-ink-soft">{n.body}</p>
               </li>

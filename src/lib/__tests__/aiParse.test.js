@@ -339,3 +339,25 @@ describe("missingRequired", () => {
     expect(missingMessage([])).toBe("");
   });
 });
+
+describe("aiToForm : circonstance du premier échange", () => {
+  const base = { type: "acquereur", fields: { nom: "Lama" }, confidence: { nom: "sur" } };
+
+  it("valeur connue → contact_circumstance, jamais dans les notes", () => {
+    const ai = {
+      ...base,
+      fields: { ...base.fields, circonstance: "agence", notes: "Circonstance : passage agence\nSyndic : Foncia" },
+      confidence: { ...base.confidence, circonstance: "sur" },
+    };
+    const { values, marks } = aiToForm(ai, "buyer");
+    expect(values.contact_circumstance).toBe("agence");
+    expect(marks.contact_circumstance).toBe("sur");
+    expect(values.context).toBe("Syndic : Foncia");
+  });
+
+  it("absente ou inconnue → rien", () => {
+    expect(aiToForm(base, "buyer").values.contact_circumstance).toBeUndefined();
+    const odd = { ...base, fields: { ...base.fields, circonstance: "salon" } };
+    expect(aiToForm(odd, "seller").values.contact_circumstance).toBeUndefined();
+  });
+});

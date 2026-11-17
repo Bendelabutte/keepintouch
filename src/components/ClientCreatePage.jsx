@@ -46,7 +46,7 @@ const plural = (n, word) => `${n} ${word}${n > 1 ? "s" : ""}`;
 const TYPED_FIELDS = [
   "first_name", "last_name", "phone", "email", "property_address", "after_address", "estimation_date",
   "contact_origin", "area", "budget_max", "project_type", "rooms", "context", "created_at", "client_birthday",
-  "consultant_feeling", "sale_reason", "min_surface", "bedrooms",
+  "consultant_feeling", "sale_reason", "min_surface", "bedrooms", "contact_circumstance",
 ];
 const isDirty = (values) => TYPED_FIELDS.some((k) => String(values?.[k] ?? "").trim() !== "");
 

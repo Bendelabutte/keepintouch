@@ -56,3 +56,26 @@ Deno.test("motifs d'étage, porte, bâtiment, digicode", () => {
     assertEquals(splitAddressComplement(input), { address, complement }, input);
   }
 });
+
+Deno.test("circonstance : gardée seulement si le texte la dit explicitement", () => {
+  const raw = { type_fiche: "acquereur", nom: "Lama", circonstance: "visite", a_verifier: [] };
+  const cases: [string, string, string | undefined][] = [
+    ["visite", "Je suis en visite avec M. Lama, cherche 2 pièces", "visite"],
+    ["agence", "À l'agence avec Mme Durand, budget 400k", "agence"],
+    ["agence", "Passage agence de M. Lama", "agence"],
+    ["telephone", "Au téléphone avec M. Lama", "telephone"],
+    ["telephone", "Il m'a appelé ce matin pour un 3 pièces", "telephone"],
+    ["telephone", "Il s'appelle Lama, cherche un 3 pièces", undefined],
+    ["visite", "M. Lama cherche un 2 pièces dans le 18e", undefined],
+    ["salon", "Rencontré au salon de l'immobilier", undefined],
+  ];
+  for (const [circonstance, text, expected] of cases) {
+    const out = sanitize({ ...raw, circonstance }, "auto", text);
+    assertEquals(out.fields.circonstance, expected, text);
+  }
+});
+
+Deno.test("circonstance vide : absente des champs", () => {
+  const out = sanitize({ type_fiche: "vendeur", nom: "Lama", circonstance: "", a_verifier: [] }, "auto", "Au téléphone avec M. Lama");
+  assertEquals(out.fields.circonstance, undefined);
+});

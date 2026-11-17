@@ -27,6 +27,8 @@ import {
 } from "./lib/transactionDraft";
 import { isPendingPromise, isSharesTotalValid, pendingStats, transactionFeesHt } from "./lib/transactions";
 import { resolveAddressText } from "./lib/address";
+import { agenciesOfUser } from "./lib/agencies";
+import { estimationThankDue } from "./lib/outreach";
 
 import AppShell, { PageHeader } from "./components/AppShell";
 import DashboardCard from "./components/DashboardCard";
@@ -55,6 +57,7 @@ const AdminModal = lazy(() => import("./components/AdminModal"));
 const ProfileModal = lazy(() => import("./components/ProfileModal"));
 const TransactionFormModal = lazy(() => import("./components/TransactionFormModal"));
 const CompensationSettingsModal = lazy(() => import("./components/CompensationSettingsModal"));
+const ThankClientModal = lazy(() => import("./components/ThankClientModal"));
 
 function App() {
   // Auth / session
@@ -116,6 +119,10 @@ function App() {
 
   // Commentaires / relances
   const [commentsByClient, setCommentsByClient] = useState({});
+  const [outreachByClient, setOutreachByClient] = useState({});
+  const [agencies, setAgencies] = useState([]);
+  const [agencyMembers, setAgencyMembers] = useState([]);
+  const [thankClient, setThankClient] = useState(null); // { client, template }
   const [commentInputs, setCommentInputs] = useState({});
   const [nextDueInputs, setNextDueInputs] = useState({});
 
@@ -166,6 +173,7 @@ const [showReleaseNotes, setShowReleaseNotes] = useState(false);
     consultant_feeling: "",
     sale_reason: "",
     contact_origin: "",
+    contact_circumstance: "",
     project_type: "",
     area: "",
     budget_max: "",
@@ -592,11 +600,50 @@ useEffect(() => {
     }
   };
 
+  // Remerciements (client_outreach) : RLS = fiches visibles. Jamais le texte du message.
+  const fetchOutreachFromDb = async () => {
+    if (!session?.user) return;
+    const { data, error } = await fetchAllRows(() =>
+      supabase
+        .from("client_outreach")
+        .select("id, client_id, user_id, channel, template, status, created_at")
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+    );
+    if (error) {
+      console.warn("Erreur chargement client_outreach :", error.message);
+      return;
+    }
+    const map = {};
+    (data || []).forEach((o) => {
+      if (!map[o.client_id]) map[o.client_id] = [];
+      map[o.client_id].push(o);
+    });
+    setOutreachByClient(map);
+  };
+
+  // Agences et membres : lisibles par tout utilisateur actif
+  const fetchAgencies = async () => {
+    if (!session?.user) return;
+    const [agenciesRes, membersRes] = await Promise.all([
+      supabase.from("agencies").select("id, name, google_review_url, address, phone, archived_at").order("name"),
+      supabase.from("agency_members").select("agency_id, user_id"),
+    ]);
+    if (agenciesRes.error || membersRes.error) {
+      console.warn("Erreur chargement agences :", (agenciesRes.error || membersRes.error).message);
+      return;
+    }
+    setAgencies(agenciesRes.data || []);
+    setAgencyMembers(membersRes.data || []);
+  };
+
   useEffect(() => {
     if (!session?.user) return;
     fetchClientsFromDb().then(() => {
       fetchCommentsFromDb();
+      fetchOutreachFromDb();
     });
+    fetchAgencies();
     fetchTransactionsFromDb();
     fetchMySettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -811,6 +858,7 @@ useEffect(() => {
       consultant_feeling: "",
       sale_reason: "",
       contact_origin: "",
+      contact_circumstance: "",
       project_type: "",
       area: "",
       budget_max: "",
@@ -853,6 +901,7 @@ useEffect(() => {
     consultant_feeling: client.consultant_feeling || "",
     sale_reason: client.sale_reason || "",
     contact_origin: client.contact_origin || "",
+    contact_circumstance: client.contact_circumstance || "",
     project_type: client.project_type || "",
     area: client.area || "",
     budget_max: client.budget_max || "",
@@ -933,6 +982,7 @@ useEffect(() => {
       project_horizon: newClient.category === "after" ? null : newClient.project_horizon || null,
       consultant_feeling: newClient.consultant_feeling || null,
       contact_origin: newClient.contact_origin || null,
+      contact_circumstance: newClient.contact_circumstance || null,
       project_type: newClient.project_type || null,
       area: newClient.category === "buyer" ? newClient.area || null : null,
       budget_max: newClient.category === "buyer" ? newClient.budget_max || null : null,
@@ -1047,8 +1097,8 @@ useEffect(() => {
     setEditingClientId(null);
     await fetchClientsFromDb();
     await fetchCommentsFromDb();
-    // Création : on arrive sur la fiche créée
-    if (createdId) navigate(clientPath(createdId));
+    // Création : on arrive sur la fiche créée, avec la proposition de remerciement
+    if (createdId) navigate(clientPath(createdId), { state: { thankPrompt: true } });
   } catch (err) {
     console.error("Erreur sauvegarde client", err);
     setClientFormError("Enregistrement impossible : " + (err.message || "voir la console (F12)."));
@@ -1673,6 +1723,17 @@ useEffect(() => {
 
   const openTransaction = (id) => navigate(transactionPath(id));
 
+  // Bandeau « Envoyer un message de remerciement ? » : retiré dès qu'on l'utilise ou qu'on le repousse
+  const dismissThankPrompt = () => {
+    if (location.state?.thankPrompt) navigate(location.pathname, { replace: true, state: null });
+  };
+
+  // template : message imposé à l'ouverture (bandeau « Remercier après l'estimation »), sinon choix automatique
+  const openThankClient = (client, template = null) => {
+    dismissThankPrompt();
+    setThankClient({ client, template });
+  };
+
   const renderClientDetailCard = (c, variant = "inline") => (
     <ClientDetailCard
       c={c}
@@ -1704,6 +1765,9 @@ useEffect(() => {
       onOpenTransaction={openTransaction}
       onSignSale={(client) => openSignSale(findOpenPromise(client))}
       onCancelPromise={(client) => openCancelTransaction(findOpenPromise(client), client)}
+      onThank={openThankClient}
+      outreachByClient={outreachByClient}
+      profileLabel={getCommercialLabel}
     />
   );
 
@@ -2830,6 +2894,13 @@ const handleCloseReleaseNotesTemporary = () => {
             humanCategory={humanCategory}
             ownerLabel={isAdmin || isManager ? getCommercialLabel(clientsRaw.find((c) => c.id === route.clientId)?.owner_id) : ""}
             renderDetail={(c) => renderClientDetailCard(c, "page")}
+            thankPrompt={Boolean(location.state?.thankPrompt)}
+            estimationThankDue={(() => {
+              const c = clientsRaw.find((x) => x.id === route.clientId);
+              return Boolean(c && estimationThankDue(c, outreachByClient[c.id]));
+            })()}
+            onThank={openThankClient}
+            onDismissThank={dismissThankPrompt}
           />
         ) : (
           <ClientsListView
@@ -2896,6 +2967,22 @@ const handleCloseReleaseNotesTemporary = () => {
         saveEmailNotificationConfig={saveEmailNotificationConfig}
         saveAdminSettings={saveAdminSettings}
         onOpenCompensation={openCompensationSettings}
+        agencies={agencies}
+        agencyMembers={agencyMembers}
+        onAgenciesChanged={fetchAgencies}
+      />
+      )}
+
+      {thankClient && (
+      <ThankClientModal
+        client={thankClient.client}
+        initialTemplate={thankClient.template}
+        userId={session.user.id}
+        sender={currentProfile || {}}
+        myAgencies={agenciesOfUser(agencies, agencyMembers, session.user.id)}
+        allAgencies={agencies}
+        onClose={() => setThankClient(null)}
+        onLogged={fetchOutreachFromDb}
       />
       )}
 

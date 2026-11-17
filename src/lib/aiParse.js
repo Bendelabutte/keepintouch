@@ -3,6 +3,7 @@
 // Fonctions pures : correspondance, conversion des nombres, fusion sans écraser les corrections
 // manuelles, liste des champs obligatoires manquants.
 import { formatPhone, isValidEmail, normalizeEmail, normalizePhone } from "./contact";
+import { CIRCUMSTANCES } from "./circumstance";
 
 // Catégorie de fiche ↔ type attendu par la fonction serveur
 export const API_TYPES = Object.freeze({ seller: "vendeur", buyer: "acquereur", after: "apres_vente" });
@@ -137,7 +138,7 @@ const REDUNDANT_LABELS = [
   "surface", "superficie", "piece", "nombre de piece", "adresse", "complement", "etage", "budget",
   "secteur", "type", "bien", "nom", "prenom", "tel", "email", "mail", "motif", "demande", "objet",
   "besoin", "souhait", "horizon", "origine", "raison", "contrainte", "ressenti", "date", "estimation",
-  "proprietaire", "client", "categorie", "projet",
+  "proprietaire", "client", "categorie", "projet", "circonstance", "premier echange", "premier contact",
 ];
 // Écartés aussi avec une précision (« Surface habitable », « Adresse exacte »), mais pas « Nom du syndic »
 const REDUNDANT_PREFIXES = [
@@ -198,6 +199,8 @@ export function aiToForm(ai, category) {
     put("email", email, ["email"], !isValidEmail(email));
   }
   put("contact_origin", f.origine_contact, ["origine_contact"]);
+  // Circonstance du premier échange : seulement une valeur connue, dite explicitement (jamais dans les notes)
+  if (CIRCUMSTANCES.includes(f.circonstance)) put("contact_circumstance", f.circonstance, ["circonstance"]);
 
   // Notes : uniquement des lignes « Libellé : valeur » pour ce qui n'a pas de champ dans ce type
   // de fiche. Une information qui a son champ n'y est jamais répétée.

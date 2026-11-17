@@ -1,12 +1,14 @@
 // src/components/AdminModal.jsx
-import React from "react";
+import React, { useState } from "react";
 import { RELANCE_PROMESSE_DAYS } from "../lib/relance";
+import { agenciesOfUser } from "../lib/agencies";
+import AgenciesSection from "./AgenciesSection";
 import { Alert, Badge, Button, Card, Checkbox, Field, Input, Modal, Select } from "./ui";
 
 const ROLE_LABELS = { admin: "Administrateur", manager: "Manager", user: "Commercial" };
 const CATEGORY_TITLES = { seller: "Vendeur / bailleur", buyer: "Acquéreur", after: "Après-vente" };
 
-function UserRow({ p, isMe, adminBusy, children }) {
+function UserRow({ p, isMe, adminBusy, agencies = [], children }) {
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
@@ -15,6 +17,15 @@ function UserRow({ p, isMe, adminBusy, children }) {
           {ROLE_LABELS[p.role || "user"] || p.role}
           {isMe ? " · vous" : ""}
         </div>
+        {agencies.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1" aria-label="Agences">
+            {agencies.map((a) => (
+              <Badge key={a.id} tone={a.archived_at ? "clos" : "muted"}>
+                {a.name}
+              </Badge>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2" aria-busy={adminBusy || undefined}>
         {children}
@@ -48,12 +59,27 @@ export default function AdminModal({
   updateEmailNotificationField,
   saveAdminSettings,
   onOpenCompensation,
+  agencies = [],
+  agencyMembers = [],
+  onAgenciesChanged,
 }) {
+  // Agence en cours de saisie non enregistrée : « Enregistrer les paramètres » ne l'enregistre pas
+  const [agencyDirty, setAgencyDirty] = useState(false);
+  const [agencyUnsaved, setAgencyUnsaved] = useState(false);
+
   if (!isAdmin) return null;
+
+  const saveAll = async () => {
+    const dirty = agencyDirty;
+    await saveAdminSettings();
+    setAgencyUnsaved(dirty);
+  };
+  const showAgencyWarning = agencyUnsaved && agencyDirty;
 
   const activeProfiles = profiles.filter((p) => p.is_active !== false);
   const inactiveProfiles = profiles.filter((p) => p.is_active === false);
   const close = () => setShowAdminPanel(false);
+  const userAgencies = (id) => agenciesOfUser(agencies, agencyMembers, id);
 
   return (
     <Modal
@@ -61,21 +87,29 @@ export default function AdminModal({
       size="xl"
       busy={adminBusy}
       title="Paramètres administrateur"
-      description="Invitations, utilisateurs, réaffectations, délais de relance et emails automatiques."
+      description="Invitations, utilisateurs, agences, réaffectations, délais de relance et emails automatiques."
       onClose={close}
       footer={
         <>
           <Button variant="secondary" onClick={close} disabled={adminBusy}>
             Fermer
           </Button>
-          <Button onClick={saveAdminSettings} loading={adminBusy}>
+          <Button onClick={saveAll} loading={adminBusy}>
             Enregistrer les paramètres
           </Button>
         </>
       }
     >
       <div className="space-y-5">
-        {adminMsg && <Alert tone={adminMsg.startsWith("Erreur") ? "danger" : "success"}>{adminMsg}</Alert>}
+        {adminMsg && (adminMsg.startsWith("Erreur") || !showAgencyWarning) && (
+          <Alert tone={adminMsg.startsWith("Erreur") ? "danger" : "success"}>{adminMsg}</Alert>
+        )}
+        {showAgencyWarning && (
+          <Alert tone="warning" title="Agence non enregistrée">
+            Les autres paramètres sont enregistrés, mais pas l’agence en cours de saisie : cliquez sur « Créer l’agence » ou
+            « Enregistrer l’agence » dans l’encadré Agences.
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           <Card title="Inviter un utilisateur" description="Accès sur invitation uniquement. L’inscription libre est désactivée.">
@@ -140,7 +174,7 @@ export default function AdminModal({
                 {activeProfiles.map((p) => {
                   const isMe = p.id === session.user.id;
                   return (
-                    <UserRow key={p.id} p={p} isMe={isMe} adminBusy={adminBusy}>
+                    <UserRow key={p.id} p={p} isMe={isMe} adminBusy={adminBusy} agencies={userAgencies(p.id)}>
                       <Button variant="secondary" size="xs" disabled={adminBusy} onClick={() => onOpenCompensation(p)}>
                         Rémunération
                       </Button>
@@ -165,7 +199,7 @@ export default function AdminModal({
               ) : (
                 <ul className="divide-y divide-line rounded-control border border-line">
                   {inactiveProfiles.map((p) => (
-                    <UserRow key={p.id} p={p} adminBusy={adminBusy}>
+                    <UserRow key={p.id} p={p} adminBusy={adminBusy} agencies={userAgencies(p.id)}>
                       <Button variant="secondary" size="xs" disabled={adminBusy} onClick={() => toggleUserActive(p.id, true)}>
                         Réactiver
                       </Button>
@@ -176,6 +210,14 @@ export default function AdminModal({
             </div>
           </div>
         </Card>
+
+        <AgenciesSection
+          agencies={agencies}
+          members={agencyMembers}
+          profiles={profiles}
+          onChanged={onAgenciesChanged}
+          onDirtyChange={setAgencyDirty}
+        />
 
         <Card
           title="Délais de relance"

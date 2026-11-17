@@ -6,6 +6,18 @@ import { Button, Modal } from "./ui";
 // Version 4.0 : textes provisoires, à réécrire en fin de projet.
 const NOTES = [
   {
+    title: "Remercier le client",
+    text: "le bouton « Remercier » de la fiche (proposé aussi juste après la création) prépare un message adapté à votre premier échange (visite, passage à l’agence, téléphone), avec la recherche de l’acquéreur et le lien d’avis Google de l’agence. Pour un vendeur : confirmation du rendez-vous d’estimation avant la date, remerciement après l’estimation ensuite, proposé par un bandeau sur la fiche. Relisez, modifiez si besoin, puis ouvrez WhatsApp ou les SMS, ou envoyez par email (le client vous répond directement, vous recevez une copie). Chaque message apparaît dans l’historique de la fiche.",
+  },
+  {
+    title: "Circonstance du premier échange",
+    text: "nouveau champ de la fiche (sous « Plus d’infos ») : visite d’un bien, passage à l’agence ou téléphone. La saisie rapide le remplit quand vous le dites (« je suis en visite avec… », « il m’a appelé »).",
+  },
+  {
+    title: "Agences",
+    text: "l’administrateur crée les agences dans les Paramètres (nom, adresse, téléphone, lien d’avis Google) et y rattache les commerciaux. Si vous êtes dans plusieurs agences, choisissez-la au moment du message : votre dernier choix est retenu.",
+  },
+  {
     title: "Saisie rapide",
     text: "« Ajouter » → « Saisie rapide » : décrivez le client en quelques phrases (nom, téléphone, budget, secteurs, contraintes…) et touchez « Remplir la fiche ». Le type de fiche et les champs se remplissent ; les champs remplis sont signalés « IA », ceux à vérifier en orange. Rien n’est enregistré tant que vous n’avez pas cliqué sur « Créer la fiche ». Également disponible sur chaque page de création.",
   },
