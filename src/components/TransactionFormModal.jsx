@@ -19,6 +19,7 @@ import {
   newRowKey,
   parseDecimal,
 } from "../lib/transactionDraft";
+import { commissionTotals, commissionWord } from "../lib/compensation";
 import AddressAutocomplete from "./AddressAutocomplete";
 import BuyerFields from "./BuyerFields";
 import { emailError } from "../lib/contact";
@@ -187,10 +188,26 @@ export function DeductionAddForm({ onAdd, disabled }) {
   );
 }
 
-// Calcul affiché en clair : honoraires HT − déductions = base, puis montant de chaque participant.
-export function FeesBreakdown({ feesHt, deductions, participants, profileLabel, formatCurrency }) {
+const formatPct = (n) => Number(n || 0).toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+
+// Calcul affiché en clair : honoraires HT − déductions = base, puis la part de base de chaque participant.
+// commissionLines (fiche transaction, voir lib/compensation) : ajoute à chaque ligne le taux appliqué et
+// la commission ou le salaire variable, puis le total ; showAgencyRest (admin) : reste agence.
+export function FeesBreakdown({
+  feesHt,
+  deductions,
+  participants,
+  profileLabel,
+  formatCurrency,
+  commissionLines = null,
+  showAgencyRest = false,
+}) {
   const ded = deductionsTotal(deductions);
   const base = netFeesHt(feesHt, deductions);
+  const lines =
+    commissionLines || participants.map((p) => ({ participant: p, base_ht: participantAmount(base, p.share_pct) }));
+  const totals = commissionLines && commissionLines.length > 0 ? commissionTotals(commissionLines, base) : null;
+  const estimated = Boolean(commissionLines?.some((l) => l.amount_ht !== null && !l.frozen));
   return (
     <div className="tabular space-y-2 text-sm leading-relaxed text-ink-soft">
       <p>
@@ -198,20 +215,51 @@ export function FeesBreakdown({ feesHt, deductions, participants, profileLabel, 
         <strong className="text-ink">{formatCurrency(ded)}</strong> = base de calcul{" "}
         <strong className="text-ink">{formatCurrency(base)}</strong>
       </p>
-      {participants.length > 0 && (
+      {lines.length > 0 && (
         <ul className="divide-y divide-line rounded-control border border-line bg-surface">
-          {participants.map((p, i) => (
-            <li key={p.key || p.id || i} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-              <span>
-                {profileLabel(p.user_id) || "—"}{" "}
-                <span className="text-ink-muted">
-                  ({SIDE_LABELS[p.side] || p.side}, {Number(p.share_pct || 0)} %)
-                </span>
-              </span>
-              <strong className="text-ink">{formatCurrency(participantAmount(base, p.share_pct))}</strong>
+          {lines.map((l, i) => {
+            const p = l.participant;
+            return (
+              <li key={p.key || p.id || i} className="px-4 py-2.5">
+                <span className="text-ink">{profileLabel(p.user_id) || "—"}</span> · {SIDE_LABELS[p.side] || p.side} ·{" "}
+                {formatPct(p.share_pct)} % de la base = <strong className="text-ink">{formatCurrency(l.base_ht)}</strong>
+                {commissionLines &&
+                  (l.amount_ht === null ? (
+                    <span className="text-ink-muted"> → taux de rémunération non renseigné</span>
+                  ) : (
+                    <>
+                      {" "}
+                      → {commissionWord(l.compensation_type)} {formatPct(l.rate)} % ={" "}
+                      <strong className="text-ink">{formatCurrency(l.amount_ht)}</strong>
+                      {l.compensation_type === "agent_tva" && " HT"}
+                      {!l.frozen && <span className="text-ink-muted"> (estimation)</span>}
+                    </>
+                  ))}
+              </li>
+            );
+          })}
+          {totals && (showAgencyRest || lines.length > 1) && (
+            <li className="bg-subtle px-4 py-2.5 font-medium text-ink">
+              {totals.label}
+              {!showAgencyRest && " (lignes affichées)"} : <strong>{formatCurrency(totals.total)}</strong>
+              {showAgencyRest &&
+                (totals.agencyRest === null ? (
+                  <span className="font-normal text-ink-muted"> · reste agence non calculable (taux manquant)</span>
+                ) : (
+                  <>
+                    {" "}
+                    · reste agence (base − {totals.label.replace("Total des ", "")}) :{" "}
+                    <strong>{formatCurrency(totals.agencyRest)}</strong>
+                  </>
+                ))}
             </li>
-          ))}
+          )}
         </ul>
+      )}
+      {estimated && (
+        <p className="text-ink-muted">
+          Estimation : taux actuel du profil ou taux exceptionnel ; le taux est figé quand la vente est actée.
+        </p>
       )}
       {base < 0 && <p className="font-medium text-danger">Les déductions dépassent les honoraires HT.</p>}
     </div>
@@ -326,7 +374,9 @@ export default function TransactionFormModal({
     if (buyerRequired && !isBuyerComplete(draft.buyer)) {
       errors.push("Le prénom et le nom de l'acquéreur sont obligatoires.");
     }
-    if (emailError(draft.buyer?.email)) errors.push("Email de l'acquéreur : " + emailError(draft.buyer.email));
+    if (emailError(draft.buyer?.email)) {
+      errors.push(`Email ${isRental ? "du locataire" : "de l'acquéreur"} : ` + emailError(draft.buyer.email));
+    }
     if (deductionsOverFees) errors.push("Les déductions dépassent les honoraires HT.");
     if (participantErrors.length || deductionsOverFees) setShowAdvanced(true);
     errors.push(...participantErrors);
@@ -349,7 +399,12 @@ export default function TransactionFormModal({
     ? "Passer sous promesse"
     : mode === "edit"
       ? "Modifier la transaction"
-      : "Nouvelle transaction";
+      : isRental
+        ? "Nouvelle location"
+        : "Nouvelle vente";
+  // Le type est fixé par le bouton d'ouverture (« Nouvelle vente » / « Nouvelle location ») ou par la
+  // fiche vendeur ; le sélecteur ne reste qu'en modification.
+  const showKindPicker = mode === "edit";
 
   const participantsSummary = numericParticipants
     .map((p) => `${profileLabel(p.user_id) || "—"} ${SIDE_LABELS[p.side]?.toLowerCase() || ""} ${p.share_pct} %`)
@@ -403,8 +458,8 @@ export default function TransactionFormModal({
     >
       <form id="transaction-form" onSubmit={handleSubmit} className="space-y-5" noValidate>
         <FormSection>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {!fromSellerFiche && (
+          <div className={cx("grid grid-cols-1 gap-4", showKindPicker && "sm:grid-cols-2")}>
+            {showKindPicker && (
               <div className="space-y-1.5">
                 <p className="text-sm font-semibold text-ink">Type</p>
                 <RadioRow
@@ -480,6 +535,7 @@ export default function TransactionFormModal({
                 onSelectClient={canPickBuyer ? selectBuyerClient : null}
                 profileLabel={profileLabel}
                 excludeIds={[draft.seller_client_id]}
+                party={isRental ? "du locataire" : "de l'acquéreur"}
               />
             }
           >

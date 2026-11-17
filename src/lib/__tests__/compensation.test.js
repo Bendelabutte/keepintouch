@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   commissionAmounts,
+  commissionLines,
   commissionRate,
+  commissionTotals,
+  commissionWord,
   compensationBalance,
   compensationStatement,
   earnedInYear,
@@ -69,6 +72,47 @@ describe("commissions", () => {
   it("déductions retirées avant le calcul", () => {
     const t = tx({ deductions: [{ amount_ht: 1000 }] });
     expect(transactionCommission(t, "u", settings("agent_micro")).amount_due).toBe(4000);
+  });
+});
+
+describe("détail des commissions d'une transaction", () => {
+  // Base nette 12 966,67 : 50 % = 6 483,34 de part, × 15 % = 972,50
+  const participants = [
+    { id: "p1", user_id: "a", side: "entree", share_pct: 50 },
+    { id: "p2", user_id: "b", side: "sortie", share_pct: 50 },
+  ];
+  const settingsByUser = {
+    a: settings("agent_micro", { rate_entree: 15, rate_sortie: 15 }),
+    b: settings("salarie", { rate_entree: 10, rate_sortie: 10 }),
+  };
+
+  it("sans ligne figée : estimation au taux du profil, part et commission par ligne", () => {
+    const lines = commissionLines({ netHt: 12966.67, participants, settingsByUser });
+    expect(lines[0]).toMatchObject({ base_ht: 6483.34, rate: 15, amount_ht: 972.5, compensation_type: "agent_micro", frozen: false });
+    expect(lines[1]).toMatchObject({ base_ht: 6483.34, rate: 10, amount_ht: 648.33, compensation_type: "salarie", frozen: false });
+    expect(commissionWord(lines[0].compensation_type)).toBe("commission");
+    expect(commissionWord(lines[1].compensation_type)).toBe("salaire variable");
+    expect(commissionTotals(lines, 12966.67)).toEqual({
+      total: 1620.83,
+      complete: true,
+      label: "Total des commissions et salaires variables",
+      agencyRest: 11345.84,
+    });
+  });
+
+  it("ligne figée : taux, type et montants de commission_entries, même si le profil a changé", () => {
+    const entries = [{ participant_id: "p1", base_ht: 6483.34, rate: 20, amount_ht: 1296.67, compensation_type: "salarie" }];
+    const [line] = commissionLines({ netHt: 12966.67, participants: [participants[0]], entries, settingsByUser });
+    expect(line).toMatchObject({ rate: 20, amount_ht: 1296.67, compensation_type: "salarie", frozen: true });
+    expect(commissionTotals([line], 12966.67).label).toBe("Total des salaires variables");
+  });
+
+  it("taux exceptionnel prioritaire ; taux ou type inconnu : pas de montant ni de reste agence", () => {
+    const withOverride = [{ ...participants[0], rate_override: 30 }];
+    expect(commissionLines({ netHt: 10000, participants: withOverride, settingsByUser })[0]).toMatchObject({ rate: 30, amount_ht: 1500 });
+    const lines = commissionLines({ netHt: 10000, participants, settingsByUser: { a: settingsByUser.a } });
+    expect(lines[1]).toMatchObject({ base_ht: 5000, rate: null, amount_ht: null, compensation_type: null });
+    expect(commissionTotals(lines, 10000)).toMatchObject({ total: 750, complete: false, agencyRest: null, label: "Total des commissions" });
   });
 });
 

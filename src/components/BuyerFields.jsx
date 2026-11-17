@@ -30,6 +30,7 @@ export default function BuyerFields({
   onSelectClient, // (fiche | null) => void
   profileLabel,
   excludeIds = [],
+  party = "de l'acquéreur", // « du locataire » pour une location (libellés d'accessibilité)
 }) {
   const [showMore, setShowMore] = useState(
     Boolean(value?.client_birthday || value?.contact_origin || value?.context)
@@ -61,11 +62,11 @@ export default function BuyerFields({
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Input aria-label="Prénom de l'acquéreur" placeholder={required ? "Prénom *" : "Prénom"} value={value.first_name} onChange={set("first_name")} />
-        <Input aria-label="Nom de l'acquéreur" placeholder={required ? "Nom *" : "Nom"} value={value.last_name} onChange={set("last_name")} />
-        <Input type="tel" inputMode="tel" aria-label="Téléphone de l'acquéreur" placeholder="Téléphone" value={value.phone} onChange={set("phone")} />
+        <Input aria-label={`Prénom ${party}`} placeholder={required ? "Prénom *" : "Prénom"} value={value.first_name} onChange={set("first_name")} />
+        <Input aria-label={`Nom ${party}`} placeholder={required ? "Nom *" : "Nom"} value={value.last_name} onChange={set("last_name")} />
+        <Input type="tel" inputMode="tel" aria-label={`Téléphone ${party}`} placeholder="Téléphone" value={value.phone} onChange={set("phone")} />
         <Field error={emailMsg}>
-          <Input type="email" aria-label="Email de l'acquéreur" placeholder="Email" value={value.email} onChange={set("email")} />
+          <Input type="email" aria-label={`Email ${party}`} placeholder="Email" value={value.email} onChange={set("email")} />
         </Field>
       </div>
 

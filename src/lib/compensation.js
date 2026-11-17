@@ -59,6 +59,58 @@ export const transactionCommission = (t, userId, settings) => {
   return { amount_ht: round2(amount_ht), amount_due: round2(amount_due), count: lines.length };
 };
 
+// Détail des commissions d'une transaction, une ligne par participant (fiche transaction).
+// entries : commission_entries de la transaction (part, taux et type figés par la base). Sans ligne
+// figée (promesse, taux ajouté après coup) : estimation au taux exceptionnel, sinon au taux du profil.
+// Type ou taux inconnu → rate et amount_ht à null.
+export const commissionLines = ({ netHt, participants = [], entries = [], settingsByUser = {} }) => {
+  const byParticipant = new Map((entries || []).map((e) => [e.participant_id, e]));
+  return (participants || []).map((p) => {
+    const e = p?.id ? byParticipant.get(p.id) : null;
+    if (e) {
+      return {
+        participant: p,
+        base_ht: round2(num(e.base_ht)),
+        rate: num(e.rate),
+        amount_ht: round2(num(e.amount_ht)),
+        compensation_type: e.compensation_type,
+        frozen: true,
+      };
+    }
+    const settings = settingsByUser?.[p?.user_id];
+    const type = settings?.compensation_type || null;
+    const rate = type ? commissionRate({ side: p?.side, rateOverride: p?.rate_override, settings }) : null;
+    const a = commissionAmounts({ netHt, sharePct: p?.share_pct, rate: rate ?? 0 });
+    return {
+      participant: p,
+      base_ht: a.base_ht,
+      rate,
+      amount_ht: rate === null ? null : a.amount_ht,
+      compensation_type: type,
+      frozen: false,
+    };
+  });
+};
+
+// Libellé d'une ligne selon le type de rémunération
+export const commissionWord = (type) => (type === "salarie" ? "salaire variable" : "commission");
+
+// Total des lignes et reste agence (base − commissions) ; reste à null si une ligne n'a pas de taux.
+export const commissionTotals = (lines, netHt) => {
+  const list = Array.isArray(lines) ? lines : [];
+  const complete = list.every((l) => l.amount_ht !== null);
+  const total = round2(list.reduce((s, l) => s + num(l.amount_ht), 0));
+  const known = list.filter((l) => l.compensation_type);
+  const salaried = known.filter((l) => l.compensation_type === "salarie").length;
+  const label =
+    known.length > 0 && salaried === known.length
+      ? "Total des salaires variables"
+      : salaried === 0
+        ? "Total des commissions"
+        : "Total des commissions et salaires variables";
+  return { total, complete, label, agencyRest: complete ? round2(num(netHt) - total) : null };
+};
+
 // Projection sur les promesses en cours (in_progress) : part × taux actuel (+ TVA pour agent_tva).
 export const projectedCompensation = (transactions, userId, settings) => {
   let amount_due = 0;

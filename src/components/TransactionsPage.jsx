@@ -26,6 +26,7 @@ import {
   round2,
   transactionFeesHt,
 } from "../lib/transactions";
+import { commissionLines } from "../lib/compensation";
 import { DeductionAddForm, FeesBreakdown } from "./TransactionFormModal";
 import { PageHeader } from "./AppShell";
 import { Alert, Badge, Button, EmptyState, Field, Input, Modal, Select, SkeletonList, StatCard, Table, Td, Th, Tr, cx } from "./ui";
@@ -70,9 +71,12 @@ const PartiesCell = ({ t }) => {
 };
 
 // Une ligne par personne (entrée + sortie regroupées) ; le détail par côté reste dans la fiche.
-const ParticipantsCell = ({ t, viewer, net, profileLabel, formatCurrency }) =>
+// Le montant est une part de la base nette, pas un gain : colonne « Parts de la base » dans le tableau,
+// préfixe « Part : » dans les cartes (sans en-tête de colonne).
+const ParticipantsCell = ({ t, viewer, net, profileLabel, formatCurrency, prefix = "" }) =>
   groupParticipantsByUser(participantsVisibleTo(t.participants, viewer)).map((g) => (
     <div key={g.user_id} className="whitespace-nowrap">
+      {prefix && <span className="text-ink-muted">{prefix} </span>}
       {shortName(profileLabel(g.user_id))} {g.share_pct} % · {formatCurrency(participantAmount(net, g.share_pct))}
     </div>
   ));
@@ -124,12 +128,48 @@ function TransactionDetailModal({
   const isRental = tx.kind === "rental";
   const status = displayStatus(tx);
 
+  // Commissions : lignes figées (commission_entries) et réglages lisibles par l'utilisateur. Les RLS
+  // limitent déjà la lecture à ses propres lignes (ou à son équipe pour un manager, tout pour l'admin).
+  const [commissionData, setCommissionData] = useState(null);
+  const loadCommissions = async () => {
+    const [entriesRes, settingsRes] = await Promise.all([
+      supabase
+        .from("commission_entries")
+        .select("participant_id, base_ht, rate, amount_ht, compensation_type")
+        .eq("transaction_id", tx.id),
+      supabase.rpc("compensation_settings"),
+    ]);
+    if (entriesRes.error || settingsRes.error) {
+      console.warn("Commissions indisponibles :", (entriesRes.error || settingsRes.error).message);
+      return;
+    }
+    setCommissionData({
+      entries: entriesRes.data || [],
+      settingsByUser: Object.fromEntries((settingsRes.data || []).map((s) => [s.user_id, s])),
+    });
+  };
+  useEffect(() => {
+    loadCommissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tx.id, tx.updated_at]);
+
+  const visibleParticipants = participantsVisibleTo(tx.participants, viewer);
+  const commissions =
+    commissionData && !isCancelled(tx)
+      ? commissionLines({
+          netHt: netFeesHt(feesHt, tx.deductions),
+          participants: visibleParticipants,
+          entries: commissionData.entries,
+          settingsByUser: commissionData.settingsByUser,
+        })
+      : null;
+
   const run = async (fn) => {
     setBusy(true);
     setError("");
     try {
       await fn();
-      await onChanged();
+      await Promise.all([onChanged(), loadCommissions()]);
     } catch (err) {
       setError(err?.message || "Erreur (voir console).");
       console.error(err);
@@ -313,9 +353,11 @@ function TransactionDetailModal({
           <FeesBreakdown
             feesHt={feesHt}
             deductions={tx.deductions || []}
-            participants={participantsVisibleTo(tx.participants, viewer)}
+            participants={visibleParticipants}
             profileLabel={profileLabel}
             formatCurrency={formatCurrency}
+            commissionLines={commissions}
+            showAgencyRest={isAdmin}
           />
         </section>
 
@@ -569,6 +611,13 @@ export default function TransactionsPage({
         </div>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {totals.map(([label, value]) => (
+          <StatCard key={label} label={label} value={formatCurrency(value)} />
+        ))}
+      </div>
+      <p className="mt-2 mb-6 text-sm text-ink-muted">Totaux calculés sur les transactions filtrées, annulées exclues.</p>
+
       {loadError && <Alert className="mb-4">{loadError}</Alert>}
       {rowError && <Alert className="mb-4">{rowError}</Alert>}
 
@@ -582,7 +631,7 @@ export default function TransactionsPage({
           <Table className="hidden xl:block">
             <thead>
               <tr>
-                {["Date", "Type", "Bien", "Parties", "Prix", "Honoraires", "Base nette HT", "Participants", "Statut", "Validation"].map((h) => (
+                {["Date", "Type", "Bien", "Parties", "Prix", "Honoraires", "Base nette HT", "Parts de la base", "Statut", "Validation"].map((h) => (
                   <Th key={h}>{h}</Th>
                 ))}
               </tr>
@@ -655,7 +704,7 @@ export default function TransactionsPage({
                       </span>
                     </span>
                     <span className="block">
-                      <ParticipantsCell t={t} viewer={viewer} net={r.net} profileLabel={profileLabel} formatCurrency={formatCurrency} />
+                      <ParticipantsCell t={t} viewer={viewer} net={r.net} profileLabel={profileLabel} formatCurrency={formatCurrency} prefix="Part :" />
                     </span>
                     {t.price !== null && t.price !== undefined && (
                       <span className="block text-ink-muted">Prix {formatCurrency(t.price)}</span>
@@ -670,13 +719,6 @@ export default function TransactionsPage({
           </ul>
         </>
       )}
-
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {totals.map(([label, value]) => (
-          <StatCard key={label} label={label} value={formatCurrency(value)} />
-        ))}
-      </div>
-      <p className="mt-2 text-sm text-ink-muted">Totaux calculés sur les transactions filtrées, annulées exclues.</p>
 
       {detail && (
         <TransactionDetailModal
