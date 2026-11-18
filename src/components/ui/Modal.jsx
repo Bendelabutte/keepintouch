@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { cx, focusRing } from "./cx";
+import { MODAL_OVERLAY_ATTR, acquireScrollLock } from "../../lib/scrollLock";
 
 const widths = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-3xl", xl: "max-w-5xl" };
 
@@ -17,15 +18,21 @@ export default function Modal({ open, title, description, size = "md", busy = fa
   useEffect(() => {
     if (!open) return undefined;
     const previous = document.activeElement;
-    const { overflow } = document.body.style;
-    document.body.style.overflow = "hidden";
+    // Verrou compté : plusieurs fenêtres peuvent se superposer et se fermer dans n'importe quel ordre
+    const releaseScroll = acquireScrollLock();
     const panel = panelRef.current;
+    // Échap et Tab ne concernent que la fenêtre du dessus
+    const isTopModal = () => {
+      const overlays = document.querySelectorAll(`[${MODAL_OVERLAY_ATTR}]`);
+      return !panel || overlays[overlays.length - 1]?.contains(panel) !== false;
+    };
     const first = panel?.querySelector(
       "input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]):not([data-close])"
     );
     (first || panel)?.focus();
 
     const onKey = (e) => {
+      if (!isTopModal()) return;
       if (e.key === "Escape" && !busy) {
         e.stopPropagation();
         onClose?.();
@@ -51,7 +58,7 @@ export default function Modal({ open, title, description, size = "md", busy = fa
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = overflow;
+      releaseScroll();
       if (previous && typeof previous.focus === "function") previous.focus();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,6 +68,7 @@ export default function Modal({ open, title, description, size = "md", busy = fa
 
   return createPortal(
     <div
+      data-modal-overlay=""
       className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 sm:items-center sm:p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose?.();

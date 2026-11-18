@@ -4,6 +4,7 @@
 import React, { useEffect, useRef } from "react";
 import { NavLink, useLocation } from "react-router";
 import { PAGE_PATHS } from "../lib/routes";
+import { releaseOrphanScrollLock } from "../lib/scrollLock";
 import { Dropdown, Icon, cx, focusRing } from "./ui";
 
 const NAV_ITEMS = [
@@ -39,6 +40,12 @@ export default function AppShell({ children, version, profile, email, isAdmin, o
   // Téléphone : les onglets défilent dans leur ligne ; l'onglet actif reste visible
   useEffect(() => {
     navRef.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [pathname]);
+
+  // Changement de page : si aucune fenêtre n'est affichée, la page doit défiler (aucun verrou résiduel).
+  // Une fenêtre ouverte par la nouvelle route est déjà dans le DOM à ce moment : son verrou est conservé.
+  useEffect(() => {
+    releaseOrphanScrollLock();
   }, [pathname]);
 
   return (
