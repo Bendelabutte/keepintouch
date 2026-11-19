@@ -215,7 +215,7 @@ export default function ClientDetailCard({
             title="Promesse"
             icon="clipboard"
             actions={
-              promiseInfo?.transactionId && (
+              onOpenTransaction && promiseInfo?.transactionId && (
                 <button type="button" className={cx("text-xs", linkClass)} onClick={() => onOpenTransaction(promiseInfo.transactionId)}>
                   Voir la transaction
                 </button>
@@ -295,7 +295,7 @@ export default function ClientDetailCard({
                 {soldInfo.feesTtc != null ? `${formatCurrency(soldInfo.feesTtc)} TTC (${formatCurrency(soldInfo.feesHt)} HT)` : "—"}
               </p>
               <div className="flex flex-wrap gap-4">
-                {soldInfo.transactionId && (
+                {onOpenTransaction && soldInfo.transactionId && (
                   <button type="button" className={linkClass} onClick={() => onOpenTransaction(soldInfo.transactionId)}>
                     Voir la transaction →
                   </button>

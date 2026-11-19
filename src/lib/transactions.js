@@ -143,7 +143,24 @@ export const canEditTransaction = (t, userId, isAdmin) =>
   !!isAdmin ||
   (!!t && !isValidated(t) && (t.created_by === userId || (t.participants || []).some((p) => p.user_id === userId)));
 
-export const canDeleteTransaction = (t, userId, isAdmin) => !!isAdmin || (!!t && t.created_by === userId && !isValidated(t));
+// Vente actée (ou reprise « signed ») : elle a clos la fiche du vendeur et créé ou converti celle de
+// l'acquéreur. Même règle que la base (20261118110000) : annulation réservée à l'admin, qui remet les
+// fiches en état ; suppression seulement une fois annulée ; une location n'est pas concernée.
+export const isActedSale = (t) => !!t && t.kind !== "rental" && isActedTransaction(t);
+
+export const canCancelTransaction = (t, userId, isAdmin) =>
+  !!t && !isCancelled(t) && canEditTransaction(t, userId, isAdmin) && (!!isAdmin || !isActedSale(t));
+
+export const canDeleteTransaction = (t, userId, isAdmin) =>
+  !!t && !isActedSale(t) && (!!isAdmin || (t.created_by === userId && !isValidated(t)));
+
+// Fiche acquéreur reliée à une vente : par son propriétaire, son manager ou un admin
+// (même règle que buyer_fiche_transition). viewer = { userId, isAdmin, managedUserIds }
+export const canLinkBuyerFiche = (client, viewer) =>
+  !!client &&
+  (!!viewer?.isAdmin ||
+    (!!client.owner_id &&
+      (client.owner_id === viewer?.userId || (viewer?.managedUserIds || []).includes(client.owner_id))));
 
 // Filtre « À valider » et bouton « Valider » (admin) : ventes actées et locations non validées
 export const isAwaitingValidation = canBeValidated;

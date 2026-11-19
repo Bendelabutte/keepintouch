@@ -10,8 +10,10 @@ import {
   TRANSACTION_KIND_LABELS,
   DISPLAY_STATUS_LABELS,
   VALIDATED_LOCK_MESSAGE,
+  canCancelTransaction,
   canDeleteTransaction,
   canEditTransaction,
+  isActedSale,
   deductionsTotal,
   displayStatus,
   groupParticipantsByUser,
@@ -123,6 +125,9 @@ function TransactionDetailModal({
 
   const editable = canEditTransaction(tx, userId, isAdmin) && !isCancelled(tx);
   const canDelete = canDeleteTransaction(tx, userId, isAdmin);
+  // Vente actée : annulation réservée à l'admin (elle remet les fiches en état)
+  const canCancel = canCancelTransaction(tx, userId, isAdmin);
+  const actedSaleLocked = !isAdmin && editable && isActedSale(tx);
   const validatedLocked = !isAdmin && isValidated(tx);
   const feesHt = transactionFeesHt(tx);
   const isRental = tx.kind === "rental";
@@ -154,7 +159,7 @@ function TransactionDetailModal({
   }, [tx.id, tx.updated_at]);
 
   const visibleParticipants = participantsVisibleTo(tx.participants, viewer);
-  const commissions =
+  const allCommissions =
     commissionData && !isCancelled(tx)
       ? commissionLines({
           netHt: netFeesHt(feesHt, tx.deductions),
@@ -163,6 +168,9 @@ function TransactionDetailModal({
           settingsByUser: commissionData.settingsByUser,
         })
       : null;
+
+  // Rémunération non ouverte au commercial (aucun taux lisible) : seules les parts sont affichées
+  const commissions = isAdmin || allCommissions?.some((l) => l.amount_ht !== null) ? allCommissions : null;
 
   const run = async (fn) => {
     setBusy(true);
@@ -275,7 +283,7 @@ function TransactionDetailModal({
               Supprimer
             </Button>
           )}
-          {editable && (
+          {canCancel && (
             <Button variant="secondary" disabled={busy} onClick={() => onCancel(tx)}>
               {status === "promise" ? "Promesse annulée" : "Annuler la transaction"}
             </Button>
@@ -295,6 +303,12 @@ function TransactionDetailModal({
     >
       <div className="space-y-6">
         {validatedLocked && <Alert tone="info">{VALIDATED_LOCK_MESSAGE}</Alert>}
+        {actedSaleLocked && (
+          <Alert tone="info">
+            Vente actée : vous pouvez encore corriger les montants et la répartition. L’annulation ou la suppression se
+            demande à l’administrateur, car elle rouvre la fiche du vendeur et celle de l’acquéreur.
+          </Alert>
+        )}
 
         <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
           <Fact label={isRental ? "Bailleur" : "Vendeur"}>{sellerDisplay(tx)}</Fact>

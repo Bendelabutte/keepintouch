@@ -62,6 +62,8 @@ export default function AdminModal({
   agencies = [],
   agencyMembers = [],
   onAgenciesChanged,
+  modulesTransactionsVisible = false,
+  setModulesTransactionsVisible,
 }) {
   // Agence en cours de saisie non enregistrée : « Enregistrer les paramètres » ne l'enregistre pas
   const [agencyDirty, setAgencyDirty] = useState(false);
@@ -110,6 +112,26 @@ export default function AdminModal({
             « Enregistrer l’agence » dans l’encadré Agences.
           </Alert>
         )}
+
+        <Card
+          title="Mise en service des modules"
+          description="Tant qu’un module est fermé, vous êtes seul à le voir. Les fiches clients, les relances et les remerciements ne sont pas concernés."
+        >
+          <Checkbox
+            label="Transactions : visible par les commerciaux"
+            checked={!!modulesTransactionsVisible}
+            onChange={(e) => setModulesTransactionsVisible?.(e.target.checked)}
+          />
+          <p className="ml-8 text-sm text-ink-muted">
+            Fermé : l’onglet Transactions et les chiffres du tableau de bord issus des transactions (CA, CA en attente, graphique)
+            sont réservés à l’administrateur. Pris en compte après « Enregistrer les paramètres », au prochain chargement de la
+            page par chaque commercial.
+          </p>
+          <p className="mt-3 text-sm text-ink-muted">
+            Rémunération : s’ouvre commercial par commercial, avec la case « Visible par le commercial » de ses réglages
+            (bouton « Rémunération » dans la liste des utilisateurs ci-dessous).
+          </p>
+        </Card>
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           <Card title="Inviter un utilisateur" description="Accès sur invitation uniquement. L’inscription libre est désactivée.">

@@ -633,7 +633,10 @@ export default function CompensationPage({
     );
   }
 
-  const typeLabel = (r) => (r.settings.compensation_type ? COMPENSATION_TYPES[r.settings.compensation_type] : "À renseigner");
+  // Admin : rappel de la mise en service (page visible ou non par le commercial)
+  const typeLabel = (r) =>
+    (r.settings.compensation_type ? COMPENSATION_TYPES[r.settings.compensation_type] : "À renseigner") +
+    (isAdmin ? (r.settings.compensation_visible === true ? " · visible par le commercial" : " · masqué au commercial") : "");
 
   return (
     <>

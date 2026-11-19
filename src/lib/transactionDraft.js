@@ -112,7 +112,7 @@ export const transactionToDraft = (t, { canEditSplit = true } = {}) => {
     date_kind: t.kind === "sale" && !t.deed_date && (t.preliminary_date || t.status === "in_progress") ? "promise" : "sale",
     date: str(t.deed_date || t.preliminary_date),
     preliminary_date: str(t.preliminary_date),
-    original: { deed_date: t.deed_date || null, fees_received_at: t.fees_received_at || null, status: t.status },
+    original: { deed_date: t.deed_date || null, fees_received_at: t.fees_received_at || null, status: t.status, kind: t.kind },
     split_locked: !canEditSplit,
     notes: str(t.notes),
     participants: (t.participants || []).map((p) => ({ ...p, key: p.id || newRowKey() })),

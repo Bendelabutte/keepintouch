@@ -19,6 +19,9 @@ import {
   pendingStats,
   canEditTransaction,
   canDeleteTransaction,
+  canCancelTransaction,
+  canLinkBuyerFiche,
+  isActedSale,
   isActedTransaction,
   isAwaitingValidation,
   canBeValidated,
@@ -582,8 +585,40 @@ describe("verrouillage par la validation de l'admin", () => {
     for (const t of states) {
       expect(canEditTransaction(t, me, false)).toBe(true);
       expect(canEditTransaction({ ...t, created_by: "u2" }, me, false)).toBe(true);
+    }
+  });
+
+  it("vente actée : annulation réservée à l'admin, suppression seulement après annulation", () => {
+    const [promise, sold, rental, signed] = states;
+    // Promesse et location : le créateur annule et supprime
+    for (const t of [promise, rental]) {
+      expect(isActedSale(t)).toBe(false);
+      expect(canCancelTransaction(t, me, false)).toBe(true);
       expect(canDeleteTransaction(t, me, false)).toBe(true);
     }
+    // Vente actée (ou reprise « signed ») : ni l'un ni l'autre pour un commercial
+    for (const t of [sold, signed, { ...sold, kind: "sale" }]) {
+      expect(isActedSale(t)).toBe(true);
+      expect(canCancelTransaction(t, me, false)).toBe(false);
+      expect(canDeleteTransaction(t, me, false)).toBe(false);
+      expect(canCancelTransaction(t, me, true)).toBe(true);
+      // L'admin annule d'abord ; la suppression vient ensuite
+      expect(canDeleteTransaction(t, me, true)).toBe(false);
+      expect(canDeleteTransaction({ ...t, status: "cancelled" }, me, true)).toBe(true);
+      expect(canDeleteTransaction({ ...t, status: "cancelled" }, me, false)).toBe(true);
+    }
+    expect(canCancelTransaction({ ...promise, status: "cancelled" }, me, true)).toBe(false);
+    expect(canCancelTransaction(promise, "u3", false)).toBe(false);
+  });
+
+  it("fiche acquéreur reliée à une vente : propriétaire, manager ou admin", () => {
+    const fiche = { id: "c1", owner_id: "u2" };
+    expect(canLinkBuyerFiche(fiche, { userId: "u2", isAdmin: false })).toBe(true);
+    expect(canLinkBuyerFiche(fiche, { userId: me, isAdmin: false })).toBe(false);
+    expect(canLinkBuyerFiche(fiche, { userId: me, isAdmin: false, managedUserIds: ["u2"] })).toBe(true);
+    expect(canLinkBuyerFiche(fiche, { userId: me, isAdmin: true })).toBe(true);
+    expect(canLinkBuyerFiche({ id: "c2", owner_id: null }, { userId: me, isAdmin: false })).toBe(false);
+    expect(canLinkBuyerFiche(null, { userId: me, isAdmin: true })).toBe(false);
   });
 
   it("non validée : ni modifiable ni supprimable par un commercial étranger à la transaction", () => {
@@ -596,7 +631,7 @@ describe("verrouillage par la validation de l'admin", () => {
       expect(canEditTransaction(t, me, false)).toBe(false);
       expect(canDeleteTransaction(t, me, false)).toBe(false);
       expect(canEditTransaction(t, me, true)).toBe(true);
-      expect(canDeleteTransaction(t, me, true)).toBe(true);
+      expect(canDeleteTransaction(t, me, true)).toBe(!isActedSale(t));
     }
   });
 

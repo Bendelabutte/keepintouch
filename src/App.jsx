@@ -25,7 +25,7 @@ import {
   emptyTransactionDraft,
   transactionToDraft,
 } from "./lib/transactionDraft";
-import { isPendingPromise, isSharesTotalValid, pendingStats, transactionFeesHt } from "./lib/transactions";
+import { canLinkBuyerFiche, isPendingPromise, isSharesTotalValid, pendingStats, transactionFeesHt } from "./lib/transactions";
 import { resolveAddressText } from "./lib/address";
 import { agenciesOfUser } from "./lib/agencies";
 import { estimationThankDue } from "./lib/outreach";
@@ -47,6 +47,7 @@ import ClosureModal from "./components/ClosureModal";
 import ReleaseNotesModal from "./components/ReleaseNotesModal";
 import PromptModal from "./components/PromptModal";
 import { projectedCompensation, projectionLabel } from "./lib/compensation";
+import { allowedPage, canSeeTransactions, hiddenNavKeys } from "./lib/modules";
 
 // recharts chargé à la demande (tableau de bord) : le reste de l'application n'en paie pas le poids.
 const DashboardChart = lazy(() => import("./components/DashboardChart"));
@@ -196,6 +197,11 @@ const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [transactions, setTransactions] = useState([]);
   // Réglages de rémunération de l'utilisateur connecté (projection du tableau de bord commercial)
   const [mySettings, setMySettings] = useState(null);
+  // Interrupteurs de mise en service (lib/modules) : module Transactions (app_settings) et nombre de
+  // réglages de rémunération que la base laisse lire (null = pas encore chargé)
+  const [modulesTransactionsVisible, setModulesTransactionsVisible] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [compensationReadable, setCompensationReadable] = useState(null);
   // Paramètres admin → « Rémunération » d'un utilisateur
   const [compensationTarget, setCompensationTarget] = useState(null);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
@@ -235,6 +241,20 @@ const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   useEffect(() => {
     if (route.page === null) navigate(PAGE_PATHS.clients, { replace: true });
   }, [route.page, navigate]);
+
+  // Mise en service : modules fermés → onglets masqués, pages redirigées vers les clients une fois
+  // le rôle et les réglages connus (jamais avant, pour ne pas rediriger un admin pendant le chargement).
+  const moduleAccess = useMemo(
+    () => ({ isAdmin, transactionsVisible: modulesTransactionsVisible, compensationReadable }),
+    [isAdmin, modulesTransactionsVisible, compensationReadable]
+  );
+  const accessReady = profiles.length > 0 && settingsLoaded && compensationReadable !== null;
+  const showTransactions = canSeeTransactions(moduleAccess);
+  const pageAllowed = allowedPage(page, moduleAccess) !== null;
+
+  useEffect(() => {
+    if (session?.user && accessReady && !pageAllowed) navigate(PAGE_PATHS.clients, { replace: true });
+  }, [session, accessReady, pageAllowed, navigate]);
 
 
 // Nouveautés : affichées une fois par utilisateur et par version (profil, sinon localStorage).
@@ -378,6 +398,7 @@ useEffect(() => {
       });
 
       setRelanceConfig(settingsRowToRelanceConfig(data));
+      setModulesTransactionsVisible(data.modules_transactions_visible === true);
     } catch (err) {
       console.error("loadRelanceConfig", err);
       setSettingsError(
@@ -385,6 +406,8 @@ useEffect(() => {
           (err.message || "erreur inconnue") +
           "). Les délais par défaut sont utilisés."
       );
+    } finally {
+      setSettingsLoaded(true);
     }
   };
 
@@ -654,8 +677,10 @@ useEffect(() => {
     const { data, error } = await supabase.rpc("compensation_settings");
     if (error) {
       console.warn("Réglages de rémunération indisponibles :", error.message);
+      setCompensationReadable(0);
       return;
     }
+    setCompensationReadable((data || []).length);
     setMySettings((data || []).find((s) => s.user_id === session.user.id) || null);
   };
 
@@ -1762,7 +1787,7 @@ useEffect(() => {
       onReopen={openReopenClient}
       formatCurrency={formatCurrency}
       onOpenClient={openClientFiche}
-      onOpenTransaction={openTransaction}
+      onOpenTransaction={showTransactions ? openTransaction : null}
       onSignSale={(client) => openSignSale(findOpenPromise(client))}
       onCancelPromise={(client) => openCancelTransaction(findOpenPromise(client), client)}
       onThank={openThankClient}
@@ -1922,6 +1947,7 @@ useEffect(() => {
       .update({
         ...relancePayload,
         ...emailPayload,
+        modules_transactions_visible: modulesTransactionsVisible === true,
       })
       .eq("id", data.id);
 
@@ -2570,6 +2596,7 @@ const handleCloseReleaseNotesTemporary = () => {
         profile={currentProfile}
         email={session.user.email}
         isAdmin={isAdmin}
+        hiddenNav={hiddenNavKeys(moduleAccess)}
         onProfile={() => setShowProfileModal(true)}
         onSettings={() => setShowAdminPanel(true)}
         onNews={() => setShowReleaseNotes(true)}
@@ -2577,7 +2604,10 @@ const handleCloseReleaseNotesTemporary = () => {
       >
 
         {settingsError && <Alert className="mb-4">{settingsError}</Alert>}
-        {page === "remuneration" ? (
+        {!pageAllowed ? (
+          // Module fermé (ou accès pas encore connu) : rien n'est affiché, la redirection suit
+          <SkeletonList rows={5} label="Chargement" />
+        ) : page === "remuneration" ? (
           <Suspense fallback={<SkeletonList rows={5} />}>
           <CompensationPage
             userId={session.user.id}
@@ -2719,6 +2749,9 @@ const handleCloseReleaseNotesTemporary = () => {
                 hint={`${dashboardStats.ventes} vente(s) sur ${dashboardStats.mandats} mandat(s)`}
                 sub="Base : tous les dossiers passés sous mandat, y compris ceux déjà basculés en après-vente."
               />
+              {/* Chiffres issus des transactions : masqués aux commerciaux tant que le module est fermé */}
+              {showTransactions && (
+              <>
               <StatCard
                 label={`CA TTC ${dashboardStats.year}`}
                 value={formatCurrency(dashboardStats.caTtc)}
@@ -2740,7 +2773,7 @@ const handleCloseReleaseNotesTemporary = () => {
                   hint={`${dashboardPending.count} promesse(s) en cours · base nette ${formatCurrency(dashboardPending.netHt)}`}
                   sub="Honoraires HT des ventes sous promesse."
                 />
-              ) : !isAdmin && !isManager ? (
+              ) : !isAdmin && !isManager && mySettings ? (
                 <StatCard
                   label={projectionLabel(mySettings?.compensation_type)}
                   value={formatCurrency(myProjection.amount_due)}
@@ -2760,6 +2793,8 @@ const handleCloseReleaseNotesTemporary = () => {
                   sub="Projection sur les ventes sous promesse (part de base nette HT)."
                 />
               )}
+              </>
+              )}
               {isAdmin && (
                 <StatCard
                   label="Potentiel sous mandat"
@@ -2770,6 +2805,7 @@ const handleCloseReleaseNotesTemporary = () => {
               )}
             </div>
 
+            {showTransactions && (
             <div className="mt-6">
               <Suspense fallback={<Skeleton className="h-[420px] w-full rounded-card" />}>
                 <DashboardChart
@@ -2783,6 +2819,7 @@ const handleCloseReleaseNotesTemporary = () => {
                 />
               </Suspense>
             </div>
+            )}
 
             {(isAdmin || isManager) && (
               <>
@@ -2801,7 +2838,7 @@ const handleCloseReleaseNotesTemporary = () => {
                           <Th align="right">Ventes</Th>
                           <Th align="right">Est. → mandat</Th>
                           <Th align="right">Mandat → vente</Th>
-                          <Th align="right">CA HT</Th>
+                          {showTransactions && <Th align="right">CA HT</Th>}
                           <Th align="right">À relancer</Th>
                           <Th align="right" className="hidden xl:table-cell">Retards &gt; 2 j</Th>
                         </tr>
@@ -2820,9 +2857,11 @@ const handleCloseReleaseNotesTemporary = () => {
                               {formatPercent(row.txEstimationMandat)}
                             </Td>
                             <Td align="right">{formatPercent(row.txMandatVente)}</Td>
-                            <Td align="right" className="font-semibold whitespace-nowrap">
-                              {formatCurrency(row.caHt)}
-                            </Td>
+                            {showTransactions && (
+                              <Td align="right" className="font-semibold whitespace-nowrap">
+                                {formatCurrency(row.caHt)}
+                              </Td>
+                            )}
                             <Td align="right">{row.dueCount}</Td>
                             <Td align="right" className={cx("hidden xl:table-cell", row.late2Count > 0 && "font-semibold text-danger")}>
                               {row.late2Count}
@@ -2836,7 +2875,7 @@ const handleCloseReleaseNotesTemporary = () => {
                         <li key={row.id} className="space-y-1 px-4 py-4 text-sm">
                           <div className="flex justify-between gap-3">
                             <strong className="text-ink">{row.label}</strong>
-                            <strong className="tabular text-ink">{formatCurrency(row.caHt)}</strong>
+                            {showTransactions && <strong className="tabular text-ink">{formatCurrency(row.caHt)}</strong>}
                           </div>
                           <p className="text-ink-muted">
                             {row.activeCount} actifs · {row.estimations} estim. · {row.mandats} mandats · {row.ventes} ventes
@@ -2852,6 +2891,7 @@ const handleCloseReleaseNotesTemporary = () => {
                       ))}
                     </ListRows>
 
+                    {showTransactions && (
                     <Card title={`CA HT par commercial (${dashboardStats.year})`} className="mt-6">
                       <ul className="space-y-3">
                         {comparisonRows.map((row) => {
@@ -2870,6 +2910,7 @@ const handleCloseReleaseNotesTemporary = () => {
                         })}
                       </ul>
                     </Card>
+                    )}
                   </>
                 )}
               </>
@@ -2967,6 +3008,8 @@ const handleCloseReleaseNotesTemporary = () => {
         saveEmailNotificationConfig={saveEmailNotificationConfig}
         saveAdminSettings={saveAdminSettings}
         onOpenCompensation={openCompensationSettings}
+        modulesTransactionsVisible={modulesTransactionsVisible}
+        setModulesTransactionsVisible={setModulesTransactionsVisible}
         agencies={agencies}
         agencyMembers={agencyMembers}
         onAgenciesChanged={fetchAgencies}
@@ -3033,6 +3076,7 @@ const handleCloseReleaseNotesTemporary = () => {
         clients={clientsRaw}
         profileLabel={getCommercialLabel}
         formatCurrency={formatCurrency}
+        canLinkBuyer={(c) => canLinkBuyerFiche(c, { userId: session.user.id, isAdmin, managedUserIds })}
         onCancel={() => setTransactionForm(null)}
         onSubmit={handleSubmitTransaction}
       />

@@ -32,7 +32,7 @@ export function Brand() {
   );
 }
 
-export default function AppShell({ children, version, profile, email, isAdmin, onProfile, onSettings, onNews, onLogout }) {
+export default function AppShell({ children, version, profile, email, isAdmin, hiddenNav = [], onProfile, onSettings, onNews, onLogout }) {
   const name = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || email;
   const { pathname } = useLocation();
   const navRef = useRef(null);
@@ -62,7 +62,8 @@ export default function AppShell({ children, version, profile, email, isAdmin, o
               ref={navRef}
               className="-mx-1 flex snap-x items-center gap-1 overflow-x-auto overscroll-x-contain px-1 pb-1 [scrollbar-width:none] lg:pb-0"
             >
-              {NAV_ITEMS.map((item) => (
+              {/* Modules fermés (mise en service) : onglets absents */}
+              {NAV_ITEMS.filter((item) => !hiddenNav.includes(item.key)).map((item) => (
                 <li key={item.key} className="shrink-0 snap-start">
                   <NavLink
                     to={item.to}

@@ -275,6 +275,7 @@ export default function TransactionFormModal({
   clients,
   profileLabel,
   formatCurrency,
+  canLinkBuyer, // (fiche) => boolean : fiche acquéreur que l'utilisateur peut relier à une vente
   onCancel,
   onSubmit,
 }) {
@@ -298,6 +299,9 @@ export default function TransactionFormModal({
   const fromSellerFiche = isPromise;
   // Une promesse existante ne devient « Vendu » que via « Acte signé » (clôture + fiche après-vente).
   const promiseLocked = isPromise || (mode === "edit" && draft.original?.status === "in_progress");
+  // Vente déjà actée : ni retour en promesse ni changement de type (la base les refuse aussi)
+  const actedSaleEdit =
+    mode === "edit" && draft.original?.kind === "sale" && ["cashed", "signed"].includes(draft.original?.status);
   const isRental = draft.kind === "rental";
   const set = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
   const setProp = (k, v) => setDraft((d) => ({ ...d, property: { ...d.property, [k]: v } }));
@@ -333,6 +337,13 @@ export default function TransactionFormModal({
   // Bloc acquéreur obligatoire (prénom + nom) : depuis une fiche vendeur, ou fiche après-vente demandée.
   const buyerRequired =
     !buyerIsClient && (fromSellerFiche || (!isRental && Boolean(draft.create_after_sale)));
+  // Fiche acquéreur d'un collègue : seul son propriétaire, son manager ou un admin peut la relier à
+  // une vente (même règle que la base). Contrôlé à la création, quand la fiche vient d'être choisie.
+  const buyerLinkRefused =
+    mode !== "edit" && !isRental && buyerIsClient && typeof canLinkBuyer === "function" && !canLinkBuyer(buyerClient);
+  const buyerLinkMessage = buyerLinkRefused
+    ? `Cette fiche est suivie par ${profileLabel(buyerClient?.owner_id) || "un autre commercial"} : seul son propriétaire, son manager ou un administrateur peut la relier à une vente. Demandez-le-lui, ou saisissez l’acquéreur à la main (« Changer »).`
+    : null;
 
   // Propriétaire du mandat : celui de la fiche vendeur reliée, sinon le négociateur à l'entrée.
   const sellerClient = (clients || []).find((c) => c.id === draft.seller_client_id) || null;
@@ -377,6 +388,7 @@ export default function TransactionFormModal({
     if (emailError(draft.buyer?.email)) {
       errors.push(`Email ${isRental ? "du locataire" : "de l'acquéreur"} : ` + emailError(draft.buyer.email));
     }
+    if (buyerLinkMessage) errors.push(buyerLinkMessage);
     if (deductionsOverFees) errors.push("Les déductions dépassent les honoraires HT.");
     if (participantErrors.length || deductionsOverFees) setShowAdvanced(true);
     errors.push(...participantErrors);
@@ -404,7 +416,7 @@ export default function TransactionFormModal({
         : "Nouvelle vente";
   // Le type est fixé par le bouton d'ouverture (« Nouvelle vente » / « Nouvelle location ») ou par la
   // fiche vendeur ; le sélecteur ne reste qu'en modification.
-  const showKindPicker = mode === "edit";
+  const showKindPicker = mode === "edit" && !actedSaleEdit;
 
   const participantsSummary = numericParticipants
     .map((p) => `${profileLabel(p.user_id) || "—"} ${SIDE_LABELS[p.side]?.toLowerCase() || ""} ${p.share_pct} %`)
@@ -475,8 +487,10 @@ export default function TransactionFormModal({
             )}
 
             <div className="space-y-1.5">
-              <p className="text-sm font-semibold text-ink">{fromSellerFiche || isRental || promiseLocked ? dateLabel : "Date"}</p>
-              {!isRental && !fromSellerFiche && !promiseLocked && (
+              <p className="text-sm font-semibold text-ink">
+                {fromSellerFiche || isRental || promiseLocked || actedSaleEdit ? dateLabel : "Date"}
+              </p>
+              {!isRental && !fromSellerFiche && !promiseLocked && !actedSaleEdit && (
                 <RadioRow
                   name="transaction-date-kind"
                   options={[
@@ -539,8 +553,14 @@ export default function TransactionFormModal({
               />
             }
           >
-            {buyerHint && <Hint>{buyerHint}</Hint>}
-            {splitHint && <Hint tone="info">{splitHint}</Hint>}
+            {buyerLinkMessage ? (
+              <Alert tone="warning">{buyerLinkMessage}</Alert>
+            ) : (
+              <>
+                {buyerHint && <Hint>{buyerHint}</Hint>}
+                {splitHint && <Hint tone="info">{splitHint}</Hint>}
+              </>
+            )}
             {!fromSellerFiche && !isRental && !buyerIsClient && (
               <Checkbox
                 label={`Créer une fiche après-vente pour l'acquéreur${draft.date_kind === "promise" ? " (à l'acte signé)" : ""}`}
