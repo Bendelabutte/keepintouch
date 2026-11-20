@@ -7,6 +7,8 @@ import {
   isSharesTotalValid,
   netFeesHt,
   participantAmount,
+  participantAmounts,
+  amountsByUser,
   sharesTotal,
   validateParticipants,
   applyDerivedFields,
@@ -156,6 +158,74 @@ describe("base nette et montant par participant", () => {
     expect(feesHtFromTtc(1000, 0)).toBe(1000);
     expect(feesHtFromTtc(1000, "")).toBe(833.33);
     expect(feesHtFromTtc("", 20)).toBe(null);
+  });
+});
+
+describe("arrondi des parts : elles totalisent toujours la base", () => {
+  const cents = (list) => Math.round(list.reduce((s, x) => s + x * 100, 0));
+
+  it("base impaire au centime, 50/50 : 6 483,34 + 6 483,33 = 12 966,67 (et non 12 966,68)", () => {
+    const participants = [
+      { user_id: "louis", side: "entree", share_pct: 50 },
+      { user_id: "louis", side: "sortie", share_pct: 50 },
+    ];
+    expect(participantAmount(12966.67, 50)).toBe(6483.34); // part isolée : le défaut d'origine
+    expect(participantAmounts(12966.67, participants)).toEqual([6483.34, 6483.33]);
+    expect(amountsByUser(12966.67, participants)).toEqual({ louis: 12966.67 });
+  });
+
+  it("3 participants à 33,33 / 33,33 / 33,34 % : l'écart va à la plus grande part", () => {
+    const participants = [
+      { user_id: "a", side: "entree", share_pct: 33.33 },
+      { user_id: "b", side: "entree", share_pct: 33.34 },
+      { user_id: "c", side: "sortie", share_pct: 33.33 },
+    ];
+    const parts = participantAmounts(100, participants);
+    expect(parts).toEqual([33.33, 33.34, 33.33]);
+    // 0,05 € : trois parts arrondies à 0,02 dépasseraient la base d'un centime
+    expect(participantAmounts(0.05, participants)).toEqual([0.02, 0.01, 0.02]);
+    for (const base of [10000, 12966.67, 0.01, 999.99, 123456.78]) {
+      expect(cents(participantAmounts(base, participants))).toBe(Math.round(base * 100));
+    }
+  });
+
+  it("3 participants à parts égales (33,33 % × 3 = 99,99 %) : total = base × 99,99 %", () => {
+    const participants = ["a", "b", "c"].map((id) => ({ user_id: id, side: "entree", share_pct: 33.33 }));
+    expect(participantAmounts(10000, participants)).toEqual([3333, 3333, 3333]);
+    expect(cents(participantAmounts(12966.67, participants))).toBe(1296537); // 12 966,67 × 99,99 %
+  });
+
+  it("déterministe : même résultat quel que soit l'ordre des lignes", () => {
+    const a = { user_id: "a", side: "entree", share_pct: 50 };
+    const b = { user_id: "b", side: "entree", share_pct: 50 };
+    const c = { user_id: "a", side: "sortie", share_pct: 50 };
+    // même côté : l'écart va au plus grand user_id ; entrée / sortie : à la sortie
+    expect(participantAmounts(12966.67, [a, b])).toEqual([6483.34, 6483.33]);
+    expect(participantAmounts(12966.67, [b, a])).toEqual([6483.33, 6483.34]);
+    expect(participantAmounts(12966.67, [c, b])).toEqual([6483.33, 6483.34]);
+    expect(participantAmounts(12966.67, [b, c])).toEqual([6483.34, 6483.33]);
+  });
+
+  it("cas limites : aucune ligne, une seule ligne, base nulle", () => {
+    expect(participantAmounts(100, [])).toEqual([]);
+    expect(participantAmounts(12966.67, [{ user_id: "a", side: "entree", share_pct: 100 }])).toEqual([12966.67]);
+    expect(participantAmounts(0, [{ user_id: "a", side: "entree", share_pct: 50 }])).toEqual([0]);
+  });
+
+  it("CA par commercial et parts sous promesse : la somme des commerciaux égale le montant", () => {
+    const t = {
+      kind: "sale",
+      status: "in_progress",
+      fees_ht: 12966.67,
+      participants: [
+        { user_id: "louis", side: "entree", share_pct: 50 },
+        { user_id: "marie", side: "sortie", share_pct: 50 },
+      ],
+    };
+    expect(caByUser([t])).toEqual({ louis: 6483.34, marie: 6483.33 });
+    expect(pendingStats([t], ["louis"]).shareNetHt).toBe(6483.34);
+    expect(pendingStats([t], ["marie"]).shareNetHt).toBe(6483.33);
+    expect(pendingStats([t], ["louis", "marie"]).shareNetHt).toBe(12966.67);
   });
 });
 

@@ -8,7 +8,7 @@ import {
   deductionsTotal,
   feesHtFromTtc,
   netFeesHt,
-  participantAmount,
+  participantAmounts,
   sharesTotal,
   validateParticipants,
 } from "../lib/transactions";
@@ -204,8 +204,8 @@ export function FeesBreakdown({
 }) {
   const ded = deductionsTotal(deductions);
   const base = netFeesHt(feesHt, deductions);
-  const lines =
-    commissionLines || participants.map((p) => ({ participant: p, base_ht: participantAmount(base, p.share_pct) }));
+  const parts = commissionLines ? [] : participantAmounts(base, participants);
+  const lines = commissionLines || participants.map((p, i) => ({ participant: p, base_ht: parts[i] }));
   const totals = commissionLines && commissionLines.length > 0 ? commissionTotals(commissionLines, base) : null;
   const estimated = Boolean(commissionLines?.some((l) => l.amount_ht !== null && !l.frozen));
   return (

@@ -21,11 +21,11 @@ Rien de ce document n'a été exécuté : il a été rédigé à partir de la le
 | B2 | **Le schéma de base n'est pas dans le dépôt.** Les tables `clients`, `profiles`, `app_settings`, `client_comments`, leurs colonnes et leurs règles d'accès ont été créées à la main avant la première migration versionnée. Les migrations supposent des colonnes (`closed_at`, `closure_reason`, `sale_result`, `next_due_source`, `commission_ttc`…) qu'on ne peut pas vérifier par lecture. | La **répétition sur une copie de la production** (§ 2.1) est la seule vraie vérification. Elle n'est pas facultative. |
 | B3 | **Version en production de `send-followup-emails` inconnue**, et son déclencheur quotidien n'est pas dans le dépôt. | Contrôle de 2 minutes dans le tableau de bord Supabase (§ 2.2, étape 4). |
 | B4 | **`deno check` n'a pas été lancé** sur les fonctions Edge (Deno n'est pas installé sur le poste). `send-client-message` devait aussi être redéployée en DEV après l'erreur « Modèle invalide ». | Redéployer `send-client-message` en DEV et renvoyer un email « Confirmation du rendez-vous ». Le déploiement par Supabase vérifie le code à ce moment-là. |
-| B5 | **Aucun test automatisé d'écran.** Seuls les calculs (`src/lib`) sont testés (281 tests). Aucun parcours complet n'est vérifié automatiquement. | Passer la liste de tests manuels du § 1.5 en DEV avant le jour J. |
+| B5 | **Aucun test automatisé d'écran.** Seuls les calculs (`src/lib`) sont testés (301 tests). Aucun parcours complet n'est vérifié automatiquement. | Passer la liste de tests manuels du § 1.5 en DEV avant le jour J. |
 
 ### 1.2 Migrations à appliquer, dans l'ordre
 
-La production s'arrête à `20261018100000`. Il y a **16 fichiers** à appliquer, dans cet ordre exact.
+La production s'arrête à `20261018100000`. Il y a **17 fichiers** à appliquer, dans cet ordre exact.
 
 Lecture du tableau :
 
@@ -53,6 +53,7 @@ Lecture du tableau :
 | 14 | `20261115110000_circonstance_echange.sql` | Champ « premier échange » de la fiche ; modèle « confirmation du rendez-vous ». **Doit passer après le n° 13.** | Non (colonne vide) | V11 |
 | 15 | `20261118100000_mise_en_service.sql` | **Interrupteurs** : module Transactions (fermé) et « Visible par le commercial » pour la rémunération (fermé pour tous). | Non (deux colonnes ajoutées, valeur « fermé ») | V12 |
 | 16 | `20261118110000_securite_avant_prod.sql` | **Corrections de sécurité** (§ 1.7) : fiche acquéreur protégée, annulation d'une vente actée réservée à l'admin, date d'ouverture obligatoire, droits d'exécution. **Doit passer après le n° 15.** | Non (fonctions, déclencheur et règle de suppression remplacés) | V14 |
+| 17 | `20261120100000_arrondis_parts.sql` | **Arrondi des parts** (§ 1.8) : les parts d'une transaction totalisent exactement la base (l'écart de centimes va à une seule ligne). Remplace la fonction de calcul des commissions. **Doit passer après le n° 16.** Jamais exécuté (ni DEV ni PROD). | En production : non (aucune commission n'existe encore). En DEV : les commissions déjà calculées sont recalculées, taux conservés ; un montant peut bouger d'un centime. | V15 |
 
 À enchaîner sans pause : les fichiers 8, 9 et 10 (la réouverture d'un dossier n'est complète qu'après le n° 10).
 
@@ -288,6 +289,33 @@ s'appliquent). L'exécution est retirée à `public` et `anon` pour toutes.
 | `can_read_transaction`, `can_edit_transaction`, `can_edit_property`, `transaction_has_participant`, `transaction_locked`, `is_manager_of`, `is_active_user`, `seller_phase_next_due` | definer | Fonctions d'aide des règles d'accès : elles ne renvoient qu'un oui/non (ou un délai) et n'écrivent rien. **Pas de contrôle de l'appelant** : un utilisateur connecté qui connaîtrait un identifiant pourrait savoir si une transaction est validée ou qui est manager de qui. Laissé tel quel pour ne pas fragiliser les règles d'accès qui s'appuient dessus. | Non |
 | `on_seller_phase_change`, `on_seller_phase_comment`, `on_transaction_commissions`, `check_payment` | definer | Fonctions de déclencheur : non appelables directement. Exécution retirée à `public` et `anon`. | Droits |
 
+### 1.8 Arrondi des parts (fichier n° 17)
+
+**Le défaut.** Chaque part était arrondie séparément. Une base de 12 966,67 € répartie 50/50 donnait deux parts
+de 6 483,34 €, soit 12 966,68 € : un centime de plus que la base.
+
+**La règle, identique dans l'interface et dans la base.** Chaque part est arrondie au centime, puis l'écart avec
+la base est attribué à **une seule ligne** : la plus grande part ; à égalité, la sortie avant l'entrée, puis le
+plus grand identifiant de commercial. Exemple : 6 483,34 € (entrée) + 6 483,33 € (sortie) = 12 966,67 €.
+La commission de chaque ligne est calculée sur sa part ainsi répartie (part × taux, arrondie au centime).
+
+Deux précisions :
+
+1. **Les commissions n'ont pas de total à respecter** quand les taux diffèrent d'un participant à l'autre : la
+   règle garantit le total des parts, et chaque commission découle de sa part.
+2. **Vente partagée, vue par un commercial.** Un commercial ne lit que sa propre ligne : l'interface ne peut pas
+   savoir si c'est lui qui porte l'écart. Sur la page Transactions, sa part d'une vente partagée peut donc
+   différer **d'un centime** de la part retenue par la base (celle du détail des commissions et du relevé, qui
+   fait foi). L'admin et le manager, qui voient toutes les lignes, ont toujours le montant exact.
+
+À tester en DEV après application :
+
+- [ ] Vente à 12 966,67 € de base, un seul commercial en entrée et en sortie (50/50) : « Ma part encaissée »
+      affiche 12 966,67 € ; le détail montre 6 483,34 € et 6 483,33 €.
+- [ ] Vente à trois participants (33,33 / 33,33 / 33,34 %) : les trois parts du détail totalisent la base.
+- [ ] Commercial dont les salaires dépassent le variable acquis : carte « Avance sur salaire variable » en
+      orange, montant positif ; relevé « Avance … » ; liste de l'admin « Avance … ».
+
 ---
 
 ## 2. Procédure
@@ -304,8 +332,9 @@ Vocabulaire :
 ### 2.0 Avant tout (dans la semaine)
 
 - [ ] Commiter et pousser sur `v4` le travail en cours (corrections, interrupteurs, notes de version, documents).
-- [ ] Appliquer en DEV, dans l'ordre, `20261118100000_mise_en_service.sql` puis
-      `20261118110000_securite_avant_prod.sql`, lancer V12 et V14, et passer les tests du § 1.5.
+- [ ] Appliquer en DEV, dans l'ordre, `20261118100000_mise_en_service.sql`,
+      `20261118110000_securite_avant_prod.sql` puis `20261120100000_arrondis_parts.sql`, lancer V12, V14 et V15,
+      et passer les tests des § 1.5 et 1.8.
       En DEV, si un commercial a déjà un type ou des taux sans date d'ouverture, lui en donner une : ses réglages
       ne pourront plus être enregistrés sans.
 - [ ] Redéployer `send-client-message` en DEV et vérifier l'email « Confirmation du rendez-vous ».
@@ -315,7 +344,7 @@ Vocabulaire :
 
 ### 2.1 Répétition sur une copie de la production
 
-But : vérifier que les 16 migrations passent sur les vraies données, sans toucher à la production.
+But : vérifier que les 17 migrations passent sur les vraies données, sans toucher à la production.
 
 **Étape 1. Créer la copie**
 
@@ -342,7 +371,7 @@ select jobid, jobname, schedule, command from cron.job;
 
 **Étape 3. Pré-contrôles** : lancer V1, V4 et V5 (§ 3) et **noter les résultats**.
 
-**Étape 4. Appliquer les 16 migrations** dans l'ordre du § 1.2, avec le contrôle indiqué après chacune.
+**Étape 4. Appliquer les 17 migrations** dans l'ordre du § 1.2, avec le contrôle indiqué après chacune.
 
 **Étape 5. Vérifications finales** (toutes dans l'éditeur SQL de la copie)
 
@@ -354,6 +383,7 @@ select jobid, jobname, schedule, command from cron.job;
 | Relances intactes | V5, comparé à l'étape 3 | Résultat **identique** pour les fiches actives |
 | Interrupteurs fermés | V12 | `false` partout |
 | Corrections de sécurité en place | V14 | Aucune fonction v4 exécutable sans connexion ; contrôles présents ; 0 commission orpheline |
+| Arrondi des parts en place | V15 | `true`, `false` ; 0 transaction en écart |
 
 Si le CA diffère de 113 246,65 €, ne pas aller plus loin : comparer le détail (V13 bis) avec le tableau de bord
 actuel pour trouver la ou les ventes en écart.
@@ -384,9 +414,9 @@ Compter 1 h 30. Garder ce document, le dossier `supabase/migrations` et les rés
 
 **Étape 3. Migrations**
 
-- [ ] Appliquer les 16 fichiers dans l'ordre du § 1.2, sans pause, avec le contrôle de chacun.
+- [ ] Appliquer les 17 fichiers dans l'ordre du § 1.2, sans pause, avec le contrôle de chacun.
 - [ ] Vérifications finales : les mêmes qu'à l'étape 5 de la répétition (7 reprises, 113 246,65 €, 0 commission,
-      relances identiques, interrupteurs fermés).
+      relances identiques, interrupteurs fermés, arrondi en place).
 
 **Étape 4. Fonctions Edge**
 
@@ -718,6 +748,30 @@ select e.id, e.transaction_id, t.status
 from public.commission_entries e
 left join public.transactions t on t.id = e.transaction_id
 where t.id is null or t.status not in ('cashed', 'signed');
+```
+
+**V15. Après le fichier n° 17 : arrondi des parts**
+
+```sql
+-- Attendu : true, false (la nouvelle fonction est en place et reste interne)
+select
+  (select prosrc like '%ecart%' from pg_proc
+    where pronamespace = 'public'::regnamespace and proname = 'refresh_commissions') as arrondi_en_place,
+  has_function_privilege('authenticated', 'public.refresh_commissions(uuid,boolean,uuid,uuid)', 'execute') as appelable;
+
+-- Attendu : 0 ligne. Transactions dont TOUS les participants ont une commission et dont les parts ne
+-- totalisent pas la base nette (une transaction dont un participant n'a pas de commission n'est pas listée).
+select t.id, round(coalesce(t.fees_ht, 0) - coalesce(d.total, 0), 2) as base_nette, e.parts
+from public.transactions t
+join lateral (
+  select sum(base_ht) as parts, count(*) as lignes from public.commission_entries where transaction_id = t.id
+) e on e.lignes > 0
+left join lateral (
+  select sum(amount_ht) as total from public.transaction_deductions where transaction_id = t.id
+) d on true
+where e.lignes = (select count(*) from public.transaction_participants tp where tp.transaction_id = t.id)
+  and (select sum(tp.share_pct) from public.transaction_participants tp where tp.transaction_id = t.id) = 100
+  and e.parts <> round(coalesce(t.fees_ht, 0) - coalesce(d.total, 0), 2);
 ```
 
 **V13. À la fin : CA HT 2026, vue « Tous »**

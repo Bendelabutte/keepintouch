@@ -9,7 +9,9 @@ import { todayStr } from "../lib/dates";
 import { parseDecimal } from "../lib/transactionDraft";
 import { isValidated, round2, validationLabel } from "../lib/transactions";
 import {
+  BALANCE_HELP,
   COMPENSATION_TYPES,
+  balanceDisplay,
   INVOICE_STATUS_LABELS,
   compensationStatement,
   earnedInYear,
@@ -48,6 +50,20 @@ const ACCEPTED_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/web
 const signedAmount = (amount, formatCurrency) =>
   amount === null ? "" : `${amount > 0 ? "+" : "−"} ${formatCurrency(Math.abs(amount))}`;
 const amountColor = (amount) => (amount > 0 ? "text-success" : amount < 0 ? "text-danger" : "");
+
+// Solde dans un tableau ou une liste : un solde négatif est une avance, en valeur positive et en orange.
+const BalanceText = ({ balance, type, formatCurrency, zeroLabel = null, lower = false }) => {
+  const b = balanceDisplay(balance, type);
+  if (b.state === "advance") {
+    return (
+      <span className="text-advance">
+        {lower ? "avance" : "Avance"} {formatCurrency(b.amount)}
+      </span>
+    );
+  }
+  if (b.state === "settled" && zeroLabel) return zeroLabel;
+  return formatCurrency(b.amount);
+};
 
 // Fenêtre de saisie générique (salaire, paiement, facture)
 function EntryModal({ id, title, children, error, busy, onCancel, onSubmit, submitLabel }) {
@@ -290,6 +306,7 @@ function UserDetail({
   payments,
   invoices,
   transactions,
+  own, // le commercial regarde sa propre rémunération (textes à la deuxième personne)
   canWrite, // admin
   canUploadInvoice,
   formatCurrency,
@@ -322,6 +339,10 @@ function UserDetail({
   );
   const projection = projectedCompensation(transactions, userId, settings);
   const balance = balanceRow ? Number(balanceRow.balance) : statement[statement.length - 1].balance;
+  const shown = balanceDisplay(balance, type, { own });
+  const sinceText = settings?.opening_balance_date
+    ? `Depuis le ${formatDate(settings.opening_balance_date)} (solde d'ouverture ${formatCurrency(settings.opening_balance || 0)}).`
+    : "";
 
   const download = async (inv) => {
     setError("");
@@ -375,13 +396,12 @@ function UserDetail({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
-          label="Solde dû par l'agence"
-          value={formatCurrency(balance)}
-          sub={
-            settings?.opening_balance_date
-              ? `Depuis le ${formatDate(settings.opening_balance_date)} (solde d'ouverture ${formatCurrency(settings.opening_balance || 0)}).`
-              : "Commissions dues − salaires et paiements imputés."
-          }
+          label={shown.title}
+          value={formatCurrency(shown.amount)}
+          tone={shown.state === "advance" ? "advance" : "neutral"}
+          hint={shown.sub}
+          sub={sinceText}
+          help={BALANCE_HELP}
         />
         <StatCard
           label={projectionLabel(type)}
@@ -426,7 +446,7 @@ function UserDetail({
                 {signedAmount(r.amount, formatCurrency)}
               </Td>
               <Td align="right" className="font-semibold whitespace-nowrap">
-                {formatCurrency(r.balance)}
+                <BalanceText balance={r.balance} type={type} formatCurrency={formatCurrency} />
               </Td>
               {canWrite && (
                 <Td align="right">
@@ -451,7 +471,12 @@ function UserDetail({
             <div className="flex flex-wrap items-center gap-2 text-ink-muted">
               <span>
                 {r.date ? formatDate(r.date) : "—"}
-                {r.link ? ` · ${r.link}` : ""} · solde {formatCurrency(r.balance)}
+                {r.link ? ` · ${r.link}` : ""} ·{" "}
+                {r.balance < 0 ? (
+                  <BalanceText balance={r.balance} type={type} formatCurrency={formatCurrency} lower />
+                ) : (
+                  <>solde {formatCurrency(r.balance)}</>
+                )}
               </span>
               <TxValidationBadge tx={txOf(r.transactionId)} />
             </div>
@@ -616,6 +641,7 @@ export default function CompensationPage({
           label={seesOthers ? labelOf(detailId) : ""}
           settings={settingsOf(detailId)}
           balanceRow={balanceOf(detailId)}
+          own={detailId === userId}
           entries={byUser(data.entries, detailId)}
           payments={byUser(data.payments, detailId)}
           invoices={byUser(data.invoices, detailId)}
@@ -660,7 +686,7 @@ export default function CompensationPage({
               <tr>
                 <Th>Commercial</Th>
                 <Th>Type</Th>
-                <Th align="right">Solde dû</Th>
+                <Th align="right">Solde dû ou avance</Th>
                 <Th align="right">À venir (projection)</Th>
                 <Th align="right">Acquis {year}</Th>
               </tr>
@@ -670,8 +696,8 @@ export default function CompensationPage({
                 <Tr key={r.id} onClick={() => setSelectedId(r.id)}>
                   <Td className="font-semibold">{r.label}</Td>
                   <Td>{typeLabel(r)}</Td>
-                  <Td align="right" className="font-semibold">
-                    {formatCurrency(r.balance)}
+                  <Td align="right" className="font-semibold whitespace-nowrap">
+                    <BalanceText balance={r.balance} type={r.settings.compensation_type} formatCurrency={formatCurrency} zeroLabel="À jour" />
                   </Td>
                   <Td align="right">
                     {formatCurrency(r.projection.amount_due)}
@@ -692,7 +718,9 @@ export default function CompensationPage({
                 >
                   <span className="flex justify-between gap-3">
                     <strong className="text-ink">{r.label}</strong>
-                    <strong className="tabular text-ink">{formatCurrency(r.balance)}</strong>
+                    <strong className="tabular whitespace-nowrap text-ink">
+                      <BalanceText balance={r.balance} type={r.settings.compensation_type} formatCurrency={formatCurrency} zeroLabel="À jour" />
+                    </strong>
                   </span>
                   <span className="block text-ink-muted">
                     {typeLabel(r)} · à venir {formatCurrency(r.projection.amount_due)} · acquis {year} {formatCurrency(r.earned)}

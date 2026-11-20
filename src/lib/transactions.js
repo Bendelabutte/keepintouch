@@ -118,7 +118,56 @@ export const deductionsTotal = (deductions) =>
 // Base de calcul des commissions : honoraires HT − déductions HT.
 export const netFeesHt = (feesHt, deductions) => round2(toNumber(feesHt) - deductionsTotal(deductions));
 
+// Part isolée (sans répartition). Pour les parts d'une transaction, utiliser participantAmounts :
+// arrondies une à une, elles peuvent dépasser la base d'un centime (12 966,67 à 50/50 → 2 × 6 483,34).
 export const participantAmount = (netFees, sharePct) => round2((toNumber(netFees) * toNumber(sharePct)) / 100);
+
+// Division entière arrondie au plus proche, le demi s'éloignant de zéro (comme round() de la base).
+const roundDiv = (n, den) => (n < 0 ? -1 : 1) * Math.floor((Math.abs(n) * 2 + den) / (2 * den));
+
+const PCT_SCALE = 10000; // parts en dix-millièmes de pour cent : calcul en entiers, sans erreur de flottant
+
+// Ligne qui reçoit l'écart de centimes : la plus grande part ; à égalité, la sortie avant l'entrée,
+// puis le plus grand user_id, puis la dernière ligne. Même ordre que refresh_commissions (20261120100000).
+const remainderIndex = (list, pcts) => {
+  let best = -1;
+  list.forEach((p, i) => {
+    if (best < 0) return void (best = i);
+    const b = list[best];
+    const cmp =
+      pcts[i] - pcts[best] ||
+      String(p?.side || "").localeCompare(String(b?.side || "")) ||
+      (String(p?.user_id || "") < String(b?.user_id || "") ? -1 : String(p?.user_id || "") > String(b?.user_id || "") ? 1 : 0);
+    if (cmp >= 0) best = i;
+  });
+  return best;
+};
+
+// Parts d'une transaction, dans l'ordre des participants : chaque part est arrondie au centime, puis
+// l'écart avec le total attendu (montant × somme des parts, donc le montant lui-même à 100 %) est
+// attribué à une seule ligne. Les parts totalisent ainsi toujours exactement la base.
+export const participantAmounts = (netFees, participants) => {
+  const list = Array.isArray(participants) ? participants : [];
+  if (list.length === 0) return [];
+  const netCents = Math.round(round2(netFees) * 100);
+  const pcts = list.map((p) => Math.round(toNumber(p?.share_pct) * PCT_SCALE));
+  const den = 100 * PCT_SCALE;
+  const cents = pcts.map((pct) => roundDiv(netCents * pct, den));
+  const target = roundDiv(netCents * pcts.reduce((s, x) => s + x, 0), den);
+  cents[remainderIndex(list, pcts)] += target - cents.reduce((s, x) => s + x, 0);
+  return cents.map((c) => c / 100);
+};
+
+// Part de chaque personne (entrée + sortie cumulées) : { user_id: montant }.
+export const amountsByUser = (netFees, participants) => {
+  const list = Array.isArray(participants) ? participants : [];
+  const cents = {};
+  participantAmounts(netFees, list).forEach((a, i) => {
+    const id = list[i]?.user_id;
+    if (id) cents[id] = (cents[id] || 0) + Math.round(a * 100);
+  });
+  return Object.fromEntries(Object.entries(cents).map(([id, c]) => [id, c / 100]));
+};
 
 export const isCancelled = (t) => t?.status === "cancelled";
 
@@ -198,15 +247,14 @@ export const applyDerivedFields = (payload, original = null) => {
 };
 
 // CA attribué : somme de fees_ht × share_pct / 100 par utilisateur (honoraires BRUTS, annulées exclues).
+// Parts réparties au centime (participantAmounts) : le CA des participants totalise les honoraires.
 // `amountOf` permet le même calcul sur une autre base (ex. TTC).
 export const caByUser = (transactions, amountOf = transactionFeesHt) => {
   const totals = {};
   (Array.isArray(transactions) ? transactions : []).forEach((t) => {
     if (!t || isCancelled(t)) return;
-    const amount = toNumber(amountOf(t));
-    (t.participants || []).forEach((p) => {
-      if (!p?.user_id) return;
-      totals[p.user_id] = (totals[p.user_id] || 0) + (amount * toNumber(p.share_pct)) / 100;
+    Object.entries(amountsByUser(amountOf(t), t.participants)).forEach(([id, a]) => {
+      totals[id] = (totals[id] || 0) + a;
     });
   });
   Object.keys(totals).forEach((k) => {
@@ -264,11 +312,10 @@ export const pendingStats = (transactions, userIds = null) => {
   let count = 0;
   let share = 0;
   pending.forEach((t) => {
-    const mine = (t.participants || []).filter((p) => ids.has(p.user_id));
-    if (mine.length === 0) return;
+    if (!(t.participants || []).some((p) => ids.has(p.user_id))) return;
     count += 1;
-    const net = netFeesHt(transactionFeesHt(t), t.deductions);
-    share += mine.reduce((s, p) => s + (net * toNumber(p.share_pct)) / 100, 0);
+    const byUser = amountsByUser(netFeesHt(transactionFeesHt(t), t.deductions), t.participants);
+    share += Object.entries(byUser).reduce((s, [id, a]) => s + (ids.has(id) ? a : 0), 0);
   });
   return { count, shareNetHt: round2(share) };
 };

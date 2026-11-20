@@ -41,6 +41,8 @@
   --color-success-soft: #ecfdf5;
   --color-warning: #92400e;
   --color-warning-soft: #fef3c7;
+  /* Avance (solde négatif d'un commercial) : orange, distinct du rouge d'alerte */
+  --color-advance: #c2410c;
   --color-danger: #b91c1c;
   --color-danger-soft: #fef2f2;
   --color-info: #1d4ed8;

@@ -24,7 +24,7 @@ import {
   validationLabel,
   isCancelled,
   netFeesHt,
-  participantAmount,
+  amountsByUser,
   round2,
   transactionFeesHt,
 } from "../lib/transactions";
@@ -75,13 +75,17 @@ const PartiesCell = ({ t }) => {
 // Une ligne par personne (entrée + sortie regroupées) ; le détail par côté reste dans la fiche.
 // Le montant est une part de la base nette, pas un gain : colonne « Parts de la base » dans le tableau,
 // préfixe « Part : » dans les cartes (sans en-tête de colonne).
-const ParticipantsCell = ({ t, viewer, net, profileLabel, formatCurrency, prefix = "" }) =>
-  groupParticipantsByUser(participantsVisibleTo(t.participants, viewer)).map((g) => (
+// Parts réparties au centime : elles totalisent la base (lib/transactions, participantAmounts).
+const ParticipantsCell = ({ t, viewer, net, profileLabel, formatCurrency, prefix = "" }) => {
+  const visible = participantsVisibleTo(t.participants, viewer);
+  const amounts = amountsByUser(net, visible);
+  return groupParticipantsByUser(visible).map((g) => (
     <div key={g.user_id} className="whitespace-nowrap">
       {prefix && <span className="text-ink-muted">{prefix} </span>}
-      {shortName(profileLabel(g.user_id))} {g.share_pct} % · {formatCurrency(participantAmount(net, g.share_pct))}
+      {shortName(profileLabel(g.user_id))} {g.share_pct} % · {formatCurrency(amounts[g.user_id] ?? 0)}
     </div>
   ));
+};
 
 // Couleurs de statut : celles des phases de la fiche vendeur (promesse, vendu), annulée en rouge.
 const STATUS_TONES = { promise: "promesse", sold: "vendu", rented: "premandat", cancelled: "danger" };
@@ -544,8 +548,7 @@ export default function TransactionsPage({
         round2(
           list.reduce((s, t) => {
             const net = netFeesHt(transactionFeesHt(t), t.deductions);
-            const mine = participantsVisibleTo(t.participants, viewer).filter((p) => p.user_id === userId);
-            return s + mine.reduce((x, p) => x + participantAmount(net, p.share_pct), 0);
+            return s + (amountsByUser(net, participantsVisibleTo(t.participants, viewer))[userId] || 0);
           }, 0)
         );
       return [

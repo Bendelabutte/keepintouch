@@ -1,10 +1,11 @@
 // src/lib/compensation.js
 // Rémunération (fonctions pures) : commissions, solde dû par l'agence, relevé, projection, factures.
 // Mêmes règles que la base (refresh_commissions, vue compensation_balances) :
-//   base = base nette HT × share_pct / 100 ; montant HT = base × taux ; dû = HT (+ TVA pour agent_tva).
+//   base = base nette HT × share_pct / 100, répartie au centime entre les participants (les parts
+//   totalisent la base) ; montant HT = base × taux ; dû = HT (+ TVA pour agent_tva).
 //   Solde = solde d'ouverture + commissions dues − parts imputées des salaires et paiements.
 import { parseDateStr, toDateStr } from "./dates";
-import { isPendingPromise, netFeesHt, round2, transactionFeesHt } from "./transactions";
+import { isPendingPromise, netFeesHt, participantAmounts, round2, transactionFeesHt } from "./transactions";
 
 export const COMPENSATION_TYPES = Object.freeze({
   salarie: "Salarié",
@@ -33,9 +34,11 @@ export const commissionRate = ({ side, rateOverride = null, settings }) => {
 export const vatRateFor = (settings) =>
   settings?.compensation_type === "agent_tva" ? (hasValue(settings?.agent_vat_rate) ? Number(settings.agent_vat_rate) : 20) : 0;
 
-// Montants d'une ligne de commission
-export const commissionAmounts = ({ netHt, sharePct, rate, vatRate = 0 }) => {
-  const base_ht = round2((num(netHt) * num(sharePct)) / 100);
+// Montants d'une ligne de commission. baseHt : part du participant déjà répartie au centime
+// (participantAmounts) ; à défaut, part isolée netHt × sharePct. La commission se calcule toujours
+// sur la part répartie, comme en base.
+export const commissionAmounts = ({ netHt, sharePct, rate, vatRate = 0, baseHt = null }) => {
+  const base_ht = hasValue(baseHt) ? round2(baseHt) : round2((num(netHt) * num(sharePct)) / 100);
   const amount_ht = round2((base_ht * num(rate)) / 100);
   return { base_ht, amount_ht, vat_rate: num(vatRate), amount_due: round2(amount_ht * (1 + num(vatRate) / 100)) };
 };
@@ -46,17 +49,22 @@ export const transactionCommission = (t, userId, settings) => {
   if (!settings?.compensation_type) return null;
   const netHt = netFeesHt(transactionFeesHt(t), t?.deductions);
   const vatRate = vatRateFor(settings);
-  const lines = (t?.participants || []).filter((p) => p?.user_id === userId);
+  const all = t?.participants || [];
+  const bases = participantAmounts(netHt, all);
   let amount_ht = 0;
   let amount_due = 0;
-  for (const p of lines) {
+  let count = 0;
+  for (let i = 0; i < all.length; i += 1) {
+    const p = all[i];
+    if (p?.user_id !== userId) continue;
     const rate = commissionRate({ side: p.side, rateOverride: p.rate_override, settings });
     if (rate === null) return null;
-    const a = commissionAmounts({ netHt, sharePct: p.share_pct, rate, vatRate });
+    const a = commissionAmounts({ baseHt: bases[i], rate, vatRate });
     amount_ht += a.amount_ht;
     amount_due += a.amount_due;
+    count += 1;
   }
-  return { amount_ht: round2(amount_ht), amount_due: round2(amount_due), count: lines.length };
+  return { amount_ht: round2(amount_ht), amount_due: round2(amount_due), count };
 };
 
 // Détail des commissions d'une transaction, une ligne par participant (fiche transaction).
@@ -65,7 +73,8 @@ export const transactionCommission = (t, userId, settings) => {
 // Type ou taux inconnu → rate et amount_ht à null.
 export const commissionLines = ({ netHt, participants = [], entries = [], settingsByUser = {} }) => {
   const byParticipant = new Map((entries || []).map((e) => [e.participant_id, e]));
-  return (participants || []).map((p) => {
+  const bases = participantAmounts(netHt, participants || []);
+  return (participants || []).map((p, i) => {
     const e = p?.id ? byParticipant.get(p.id) : null;
     if (e) {
       return {
@@ -80,7 +89,7 @@ export const commissionLines = ({ netHt, participants = [], entries = [], settin
     const settings = settingsByUser?.[p?.user_id];
     const type = settings?.compensation_type || null;
     const rate = type ? commissionRate({ side: p?.side, rateOverride: p?.rate_override, settings }) : null;
-    const a = commissionAmounts({ netHt, sharePct: p?.share_pct, rate: rate ?? 0 });
+    const a = commissionAmounts({ baseHt: bases[i], rate: rate ?? 0 });
     return {
       participant: p,
       base_ht: a.base_ht,
@@ -152,6 +161,35 @@ export const compensationBalance = ({ settings, entries = [], payments = [] }) =
     commissionsDue: round2(due),
     imputedPaid: round2(paid),
     balance: round2(num(settings?.opening_balance) + due - paid),
+  };
+};
+
+// Présentation du solde. Positif : dû par l'agence ; nul : à jour ; négatif : avance (les sommes
+// versées dépassent le variable acquis), affichée en valeur positive.
+// own : le commercial regarde son propre solde (sinon admin ou manager, à la troisième personne).
+export const BALANCE_HELP =
+  "Le solde part du solde d'ouverture, auquel s'ajoute le variable acquis sur les ventes actées et dont on retire les salaires et paiements imputés. " +
+  "Seule la part variable d'un salaire est imputée : sa part fixe et ses primes ne diminuent pas le solde. " +
+  "Quand les sommes versées dépassent le variable acquis, le solde devient une avance, compensée par les ventes suivantes.";
+
+export const balanceDisplay = (balance, type, { own = true } = {}) => {
+  const value = round2(num(balance));
+  if (value > 0) {
+    return {
+      state: "due",
+      title: "Solde dû par l'agence",
+      amount: value,
+      sub: own ? "Montant restant à vous verser." : "Montant restant à lui verser.",
+    };
+  }
+  if (value === 0) return { state: "settled", title: "Solde à jour", amount: 0, sub: "" };
+  return {
+    state: "advance",
+    title: type === "salarie" ? "Avance sur salaire variable" : "Avance sur commissions",
+    amount: round2(-value),
+    sub: `Les sommes versées dépassent le variable acquis à ce jour. Cette avance sera compensée par ${
+      own ? "vos" : "ses"
+    } prochaines ventes.`,
   };
 };
 
